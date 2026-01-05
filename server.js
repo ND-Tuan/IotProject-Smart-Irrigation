@@ -175,7 +175,7 @@ mqttClient.on("message", (topic, message) => {
   // E. Cập nhật mode hiện tại
   if (topic === "iot/mode") {
     currentMode = payload;
-    console.log(`🔄 Chuyển chế độ: ${currentMode}`);
+    console.log(`Chuyển chế độ: ${currentMode}`);
   }
 });
 
@@ -280,7 +280,7 @@ app.post("/api/threshold", express.json(), (req, res) => {
         return;
       }
       
-      console.log(`✅ Đã cập nhật ngưỡng: ${start}-${stop}%`);
+      console.log(`Đã cập nhật ngưỡng: ${start}-${stop}%`);
       
       // Gửi lệnh xuống ESP32 qua MQTT
       const message = `${start},${stop}`;

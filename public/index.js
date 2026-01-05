@@ -87,7 +87,7 @@ function loadDashboardData() {
 
 // 1. KẾT NỐI SERVER
 socket.on("connect", () => {
-  console.log('✅ Socket.IO đã kết nối với server!');
+  console.log('Socket.IO đã kết nối với server!');
   document.getElementById("connection-status").innerText =
     "Đã kết nối Server Node.js!";
   document.getElementById("connection-status").style.color = "#4caf50";
@@ -95,14 +95,14 @@ socket.on("connect", () => {
 });
 
 socket.on("disconnect", () => {
-  console.log('❌ Socket.IO bị ngắt kết nối!');
+  console.log('Socket.IO bị ngắt kết nối!');
   document.getElementById("connection-status").innerText =
     "Mất kết nối Server!";
   document.getElementById("connection-status").style.color = "#f44336";
 });
 
 socket.on("connect_error", (error) => {
-  console.error('❌ Lỗi kết nối Socket.IO:', error);
+  console.error('Lỗi kết nối Socket.IO:', error);
   document.getElementById("connection-status").innerText =
     "Lỗi kết nối Server!";
   document.getElementById("connection-status").style.color = "#f44336";
@@ -210,12 +210,12 @@ function updateModeUI(mode) {
 
 function setMode(mode) {
   if (!socket.connected) {
-    alert('❌ Chưa kết nối server! Vui lòng kiểm tra kết nối.');
+    alert('Chưa kết nối server! Vui lòng kiểm tra kết nối.');
     console.error('Socket.IO chưa kết nối!');
     return;
   }
   
-  console.log(`📤 Gửi lệnh chuyển mode: ${mode}`);
+  console.log(`Gửi lệnh chuyển mode: ${mode}`);
   socket.emit("control-command", { topic: "iot/cmd/mode", message: mode });
   
   // Cập nhật UI ngay lập tức
@@ -224,7 +224,7 @@ function setMode(mode) {
   // Hiển thị toast notification
   const statusEl = document.getElementById('connection-status');
   const originalText = statusEl.innerText;
-  statusEl.innerText = `⏳ Đang chuyển sang ${mode === 'AUTO' ? 'Tự động' : 'Thủ công'}...`;
+  statusEl.innerText = `Đang chuyển sang ${mode === 'AUTO' ? 'Tự động' : 'Thủ công'}...`;
   statusEl.style.color = '#ff9800';
   
   setTimeout(() => {
@@ -239,7 +239,7 @@ let pumpControlTimeout = null;
 function controlPump(action) {
   // Kiểm tra kết nối
   if (!socket.connected) {
-    alert('❌ Chưa kết nối server! Vui lòng kiểm tra kết nối.');
+    alert('Chưa kết nối server! Vui lòng kiểm tra kết nối.');
     console.error('Socket.IO chưa kết nối!');
     return;
   }
@@ -250,13 +250,13 @@ function controlPump(action) {
     return;
   }
   
-  console.log(`📤 Gửi lệnh điều khiển bơm: ${action}`);
+  console.log(`Gửi lệnh điều khiển bơm: ${action}`);
   
   // Gửi lệnh ngay lập tức
   socket.emit("control-command", { topic: "iot/cmd/pump", message: action });
   
   // Log confirmation
-  console.log(`✅ Đã gửi lệnh ${action} lên server`);
+  console.log(`Đã gửi lệnh ${action} lên server`);
   
   // Visual feedback - thêm hiệu ứng cho nút được nhấn
   const clickedBtn = event.target.closest('.btn-pump');
@@ -274,7 +274,7 @@ function controlPump(action) {
   const pumpVal = document.getElementById('pump-val');
   if (pumpVal) {
     const isOn = action === 'ON';
-    pumpVal.innerText = isOn ? '⏳ Đang bật...' : '⏳ Đang tắt...';
+    pumpVal.innerText = isOn ? 'Đang bật...' : 'Đang tắt...';
     pumpVal.style.color = '#ff9800';
   }
   
