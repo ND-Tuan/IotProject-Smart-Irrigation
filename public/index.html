@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vườn Thông Minh Full-Stack</title>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- Sidebar for Desktop -->
+        <div class="sidebar">
+            <div class="logo">
+                <h2>VƯỜN THÔNG MINH</h2>
+            </div>
+            
+            <nav class="menu">
+                <button class="menu-item active" onclick="showView('dashboard')">
+                    <i class="fa-solid fa-gauge-high"></i>
+                    <span>Dashboard</span>
+                </button>
+                <button class="menu-item" onclick="showView('control')">
+                    <i class="fa-solid fa-sliders"></i>
+                    <span>Điều Khiển</span>
+                </button>
+                <button class="menu-item" onclick="showView('schedule')">
+                    <i class="fa-solid fa-clock"></i>
+                    <span>Lịch Tưới</span>
+                </button>
+                <button class="menu-item" onclick="showView('chart')">
+                    <i class="fa-solid fa-chart-line"></i>
+                    <span>Biểu Đồ</span>
+                </button>
+                <button class="menu-item" onclick="showView('stats')">
+                    <i class="fa-solid fa-chart-pie"></i>
+                    <span>Thống Kê</span>
+                </button>
+                <button class="menu-item" onclick="showView('history')">
+                    <i class="fa-solid fa-clock-rotate-left"></i>
+                    <span>Lịch Sử</span>
+                </button>
+            </nav>
+
+            <div class="footer-status">
+                <i class="fa-solid fa-server"></i>
+                <span id="connection-status">Đang kết nối...</span>
+            </div>
+        </div>
+
+        <!-- Bottom Navigation for Mobile -->
+        <nav class="bottom-nav">
+            <button class="menu-item active" onclick="showView('dashboard')">
+                <i class="fa-solid fa-gauge-high"></i>
+            </button>
+            <button class="menu-item" onclick="showView('control')">
+                <i class="fa-solid fa-sliders"></i>
+            </button>
+            <button class="menu-item" onclick="showView('schedule')">
+                <i class="fa-solid fa-clock"></i>
+            </button>
+            <button class="menu-item" onclick="showView('chart')">
+                <i class="fa-solid fa-chart-line"></i>
+            </button>
+            <button class="menu-item" onclick="showView('stats')">
+                <i class="fa-solid fa-chart-pie"></i>
+            </button>
+        </nav>
+
+        <div class="main-content">
+            <div id="view-dashboard" class="view active">
+                <h3 class="view-title">Dashboard - Giám Sát Thời Gian Thực</h3>
+                <div class="dashboard-grid">
+                    <div class="data-card">
+                        <div class="card-icon" style="color: #e53935;">
+                            <i class="fa-solid fa-temperature-half"></i>
+                        </div>
+                        <div class="card-content">
+                            <div class="card-label">Nhiệt độ</div>
+                            <div class="card-value"><span id="temp-val">--</span> °C</div>
+                        </div>
+                    </div>
+
+                    <div class="data-card">
+                        <div class="card-icon" style="color: #039be5;">
+                            <i class="fa-solid fa-droplet"></i>
+                        </div>
+                        <div class="card-content">
+                            <div class="card-label">Độ ẩm KK</div>
+                            <div class="card-value"><span id="hum-val">--</span> %</div>
+                        </div>
+                    </div>
+
+                    <div class="data-card">
+                        <div class="card-icon" style="color: #43a047;">
+                            <i class="fa-solid fa-seedling"></i>
+                        </div>
+                        <div class="card-content">
+                            <div class="card-label">Độ ẩm Đất</div>
+                            <div class="card-value"><span id="soil-val">--</span> %</div>
+                        </div>
+                    </div>
+
+                    <div class="data-card">
+                        <div class="card-icon" style="color: #546e7a;">
+                            <i class="fa-solid fa-gear"></i>
+                        </div>
+                        <div class="card-content">
+                            <div class="card-label">Trạng thái Bơm</div>
+                            <div class="card-value" id="pump-val">Đang tải...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="view-control" class="view">
+                <h3 class="view-title">Điều Khiển Bơm & Cài Đặt</h3>
+                <div class="control-section">
+                    <div class="control-card">
+                        <h4>Chế Độ Hoạt Động</h4>
+                        <div class="mode-buttons">
+                            <button id="btn-auto" class="btn-mode active" onclick="setMode('AUTO')">
+                                <i class="fa-solid fa-robot"></i> Tự Động
+                            </button>
+                            <button id="btn-manual" class="btn-mode inactive" onclick="setMode('MANUAL')">
+                                <i class="fa-solid fa-hand-pointer"></i> Thủ Công
+                            </button>
+                        </div>
+                        <div id="manual-controls" class="manual-panel">
+                            <button class="btn-pump btn-on" onclick="controlPump('ON')">BẬT BƠM</button>
+                            <button class="btn-pump btn-off" onclick="controlPump('OFF')">TẮT BƠM</button>
+                        </div>
+                    </div>
+
+                    <div class="control-card">
+                        <h4>Cài Đặt Ngưỡng Tự Động</h4>
+                        <div class="threshold-controls">
+                            <div class="threshold-item">
+                                <label>Bật bơm khi độ ẩm đất <</label>
+                                <input type="number" id="threshold-start" min="0" max="100" value="40">
+                                <span>%</span>
+                            </div>
+                            <div class="threshold-item">
+                                <label>Tắt bơm khi độ ẩm đất ></label>
+                                <input type="number" id="threshold-stop" min="0" max="100" value="45">
+                                <span>%</span>
+                            </div>
+                            <button class="btn-update-threshold" onclick="updateThreshold()">
+                                <i class="fa-solid fa-check"></i> Áp Dụng
+                            </button>
+                            <div class="threshold-status">
+                                <small>Ngưỡng hiện tại: <strong id="current-threshold">40-45%</strong></small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="view-schedule" class="view">
+                <h3 class="view-title">Quản Lý Lịch Tưới</h3>
+                <div class="schedule-section">
+                    <button class="btn-add-new-schedule" onclick="openAddModal()">
+                        <i class="fa-solid fa-plus"></i> Thêm Lịch Tưới Mới
+                    </button>
+                    <div class="schedule-list-card">
+                        <h4>Danh Sách Lịch Tưới</h4>
+                        <div class="schedule-list" id="schedule-list">
+                            <p style="color: #666; font-style: italic;">Chưa có lịch tưới nào</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="view-chart" class="view">
+                <h3 class="view-title">Biểu Đồ Nhiệt Độ, Độ Ẩm & Độ Ẩm Đất</h3>
+                <div class="chart-controls">
+                    <button class="btn-chart-period active" onclick="loadChartData('day')" id="chart-btn-day">Hôm nay</button>
+                    <button class="btn-chart-period" onclick="loadChartData('week')" id="chart-btn-week">Tuần này</button>
+                    <button class="btn-chart-period" onclick="loadChartData('month')" id="chart-btn-month">Tháng này</button>
+                </div>
+                <div class="chart-wrapper">
+                    <canvas id="tempHumChart"></canvas>
+                </div>
+            </div>
+
+            <div id="view-stats" class="view">
+                <h3 class="view-title">Thống Kê Hoạt Động Bơm</h3>
+                <div class="stats-section">
+                    <div class="stats-period">
+                        <button class="btn-period active" onclick="loadPumpStats('day')" id="btn-day">Hôm nay</button>
+                        <button class="btn-period" onclick="loadPumpStats('week')" id="btn-week">Tuần này</button>
+                        <button class="btn-period" onclick="loadPumpStats('month')" id="btn-month">Tháng này</button>
+                    </div>
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-label">Tổng lần bật/tắt</div>
+                            <div class="stat-value" id="stat-total">--</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Lần bật (ON)</div>
+                            <div class="stat-value" id="stat-on" style="color: #2e7d32;">--</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Lần tắt (OFF)</div>
+                            <div class="stat-value" id="stat-off" style="color: #c62828;">--</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Tự động</div>
+                            <div class="stat-value" id="stat-auto" style="color: #0277bd;">--</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Thủ công</div>
+                            <div class="stat-value" id="stat-manual" style="color: #f57c00;">--</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Lịch sử bơm (Mobile + Desktop) -->
+                <div class="history-section">
+                    <h4 class="history-title">Lịch Sử Bật/Tắt Bơm</h4>
+                    <div class="history-wrapper">
+                        <table class="history-table">
+                            <thead>
+                                <tr>
+                                    <th>Thời gian</th>
+                                    <th>Hành động</th>
+                                    <th>Chế độ</th>
+                                </tr>
+                            </thead>
+                            <tbody id="history-table-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="view-history" class="view desktop-only">
+                <h3 class="view-title">Lịch Sử Bật/Tắt Bơm</h3>
+                <div class="history-wrapper">
+                    <table class="history-table">
+                        <thead>
+                            <tr>
+                                <th>Thời gian</th>
+                                <th>Hành động</th>
+                                <th>Chế độ</th>
+                            </tr>
+                        </thead>
+                        <tbody id="history-table-body-desktop"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal thêm lịch mới -->
+    <div id="add-schedule-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <button class="modal-back" onclick="closeAddModal()">
+                    <i class="fa-solid fa-arrow-left"></i>
+                </button>
+                <h3>Thêm lịch tưới mới</h3>
+                <div style="width: 60px;"></div>
+            </div>
+            
+            <div class="modal-body">
+                <div class="modal-section">
+                    <label>CHỌN THỜI GIAN</label>
+                    <div class="time-picker">
+                        <input type="time" id="add-schedule-time">
+                    </div>
+                </div>
+
+                <div class="modal-section">
+                    <label>CHỌN NGÀY TRONG TUẦN</label>
+                    <div class="modal-days" id="add-modal-days">
+                        <button class="modal-day-btn add-day-btn" data-day="1">T2</button>
+                        <button class="modal-day-btn add-day-btn" data-day="2">T3</button>
+                        <button class="modal-day-btn add-day-btn" data-day="3">T4</button>
+                        <button class="modal-day-btn add-day-btn" data-day="4">T5</button>
+                        <button class="modal-day-btn add-day-btn" data-day="5">T6</button>
+                        <button class="modal-day-btn add-day-btn" data-day="6">T7</button>
+                        <button class="modal-day-btn add-day-btn" data-day="0">CN</button>
+                    </div>
+                </div>
+            </div>
+
+            <button class="modal-save-btn" onclick="saveNewSchedule()">
+                Thêm lịch tưới
+            </button>
+        </div>
+    </div>
+
+    <!-- Modal chỉnh sửa lịch -->
+    <div id="edit-schedule-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <button class="modal-back" onclick="closeEditModal()">
+                    <i class="fa-solid fa-arrow-left"></i>
+                </button>
+                <h3>Sửa hẹn giờ</h3>
+                <button class="modal-delete" onclick="deleteScheduleFromModal()">
+                    <i class="fa-solid fa-trash"></i> Xóa
+                </button>
+            </div>
+            
+            <div class="modal-body">
+                <div class="modal-section">
+                    <label>CHỌN THỜI GIAN</label>
+                    <div class="time-picker">
+                        <input type="time" id="edit-schedule-time">
+                    </div>
+                </div>
+
+                <div class="modal-section">
+                    <div class="modal-row">
+                        <label>HÀNH ĐỘNG</label>
+                        <label class="modal-toggle">
+                            <input type="checkbox" id="edit-schedule-enabled" checked>
+                            <span class="modal-toggle-slider"></span>
+                            <span class="modal-toggle-label">BẬT</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="modal-section">
+                    <label>CHỌN NGÀY TRONG TUẦN</label>
+                    <div class="modal-days">
+                        <button class="modal-day-btn" data-day="1">T2</button>
+                        <button class="modal-day-btn" data-day="2">T3</button>
+                        <button class="modal-day-btn" data-day="3">T4</button>
+                        <button class="modal-day-btn" data-day="4">T5</button>
+                        <button class="modal-day-btn" data-day="5">T6</button>
+                        <button class="modal-day-btn" data-day="6">T7</button>
+                        <button class="modal-day-btn" data-day="0">CN</button>
+                    </div>
+                </div>
+            </div>
+
+            <button class="modal-save-btn" onclick="saveScheduleEdit()">
+                Lưu hẹn giờ
+            </button>
+        </div>
+    </div>
+
+    <script src="index.js"></script>
+</body>
+
+</html>

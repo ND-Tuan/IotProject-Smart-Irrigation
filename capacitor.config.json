@@ -1,0 +1,11 @@
+{
+  "appId": "com.iot.garden",
+  "appName": "Vuon Thong Minh",
+  "webDir": "public",
+  "server": {
+    "cleartext": true,
+    "allowNavigation": [
+      "192.168.88.229"
+    ]
+  }
+}
