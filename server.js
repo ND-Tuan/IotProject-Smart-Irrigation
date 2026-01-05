@@ -1,478 +1,289 @@
-// server.js (Bản chuẩn - Đã đổi cổng 3001)
+require("dotenv").config();
 const express = require("express");
 const mqtt = require("mqtt");
 const http = require("http");
 const { Server } = require("socket.io");
 const path = require("path");
-const sqlite3 = require("sqlite3").verbose();
+const mongoose = require("mongoose");
+const cors = require("cors");
 
-// --- 1. CẤU HÌNH SERVER ---
+// Cấu hình server
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, { cors: { origin: "*" } });
 
-// Phục vụ file giao diện trong thư mục 'public'
+app.use(cors());
+app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-// --- 2. KHỞI TẠO DATABASE SQLITE ---
-const db = new sqlite3.Database("./garden.db", (err) => {
-  if (err) console.error("Lỗi mở Database:", err.message);
-  else console.log("Đã kết nối tới Database SQLite (garden.db)");
+// Kết nối MongoDB
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log("💾 MongoDB: Kết nối thành công!"))
+  .catch((err) => console.error("❌ MongoDB Error:", err));
+
+// Định nghĩa Schema
+// 1. Bảng dữ liệu cảm biến (measurements)
+const MeasurementSchema = new mongoose.Schema({
+  temp: Number,
+  hum: Number,
+  soil: Number,
+  timestamp: { type: Date, default: Date.now }
 });
 
-// Tạo bảng lưu trữ nếu chưa có
-db.run(`CREATE TABLE IF NOT EXISTS measurements (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    temp REAL,
-    hum REAL,
-    soil REAL,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-)`);
+const Measurement = mongoose.model("Measurement", MeasurementSchema);
 
-// Bảng lưu lịch sử bật/tắt bơm
-db.run(`CREATE TABLE IF NOT EXISTS pump_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    action TEXT,
-    mode TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-)`);
-
-// Bảng lưu lịch tưới
-db.run(`CREATE TABLE IF NOT EXISTS schedules (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    time TEXT,
-    days TEXT DEFAULT '[]',
-    duration INTEGER,
-    enabled INTEGER DEFAULT 1
-)`);
-
-// Bảng lưu cài đặt hệ thống
-db.run(`CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT
-)`, function(err) {
-  if (err) console.error('Lỗi tạo bảng settings:', err.message);
-  else {
-    // Khởi tạo giá trị mặc định cho threshold nếu chưa có
-    db.get("SELECT value FROM settings WHERE key = 'threshold_start'", (err, row) => {
-      if (!row) {
-        db.run("INSERT INTO settings (key, value) VALUES ('threshold_start', '40')");
-        db.run("INSERT INTO settings (key, value) VALUES ('threshold_stop', '45')");
-        console.log('Đã khởi tạo ngưỡng mặc định: 40-45%');
-      }
-    });
-  }
+// 2. Bảng lịch sử bơm (pump_logs)
+const PumpLogSchema = new mongoose.Schema({
+  action: String, // 'ON' hoặc 'OFF'
+  mode: String,   // 'AUTO' hoặc 'MANUAL'
+  timestamp: { type: Date, default: Date.now }
 });
+const PumpLog = mongoose.model("PumpLog", PumpLogSchema);
 
-// Hàm xóa dữ liệu cũ hơn 3 tháng
-function cleanOldData() {
-  const sql1 = `DELETE FROM measurements WHERE timestamp < datetime('now', '-3 months')`;
-  const sql2 = `DELETE FROM pump_logs WHERE timestamp < datetime('now', '-3 months')`;
-  
-  db.run(sql1, function(err) {
-    if (err) console.error('Lỗi xóa dữ liệu cũ measurements:', err.message);
-    else if (this.changes > 0) console.log(`Đã xóa ${this.changes} bản ghi measurements cũ hơn 3 tháng`);
-  });
-  
-  db.run(sql2, function(err) {
-    if (err) console.error('Lỗi xóa dữ liệu cũ pump_logs:', err.message);
-    else if (this.changes > 0) console.log(`Đã xóa ${this.changes} bản ghi pump_logs cũ hơn 3 tháng`);
-  });
+// 3. Bảng lịch tưới (schedules)
+const ScheduleSchema = new mongoose.Schema({
+  time: String,      // "HH:MM"
+  days: [Number],    // [0, 1, 2...] (0=CN)
+  duration: Number,  // giây
+  enabled: { type: Boolean, default: true }
+});
+const Schedule = mongoose.model("Schedule", ScheduleSchema);
+
+// 4. Bảng cài đặt (settings)
+const SettingSchema = new mongoose.Schema({
+  key: { type: String, unique: true },
+  value: String
+});
+const Setting = mongoose.model("Setting", SettingSchema);
+
+// Khởi tạo ngưỡng mặc định
+async function initSettings() {
+  try {
+    const start = await Setting.findOne({ key: "threshold_start" });
+    if (!start) await Setting.create({ key: "threshold_start", value: "40" });
+    
+    const stop = await Setting.findOne({ key: "threshold_stop" });
+    if (!stop) await Setting.create({ key: "threshold_stop", value: "45" });
+    
+    console.log("✅ Đã kiểm tra/khởi tạo cài đặt ngưỡng.");
+  } catch (e) { console.error("Lỗi init settings:", e); }
 }
+initSettings();
 
-// Chạy mỗi 1 giờ
-setInterval(cleanOldData, 3600000);
-cleanOldData(); // Chạy ngay lần đầu
-
-// --- 3. CẤU HÌNH MQTT ---
-const mqttHost =
-  "mqtts://dff8f7471d7745a6907092c74b9267e6.s1.eu.hivemq.cloud:8883";
-const mqttOptions = {
-  username: "Project220251",
-  password: "Project220251",
+// Cấu hình MQTT
+const mqttClient = mqtt.connect(process.env.MQTT_HOST, {
+  username: process.env.MQTT_USER,
+  password: process.env.MQTT_PASS,
   rejectUnauthorized: false,
-};
-const mqttClient = mqtt.connect(mqttHost, mqttOptions);
+});
 
-// Tracking thời gian lưu database (mỗi 5 phút)
+// Biến lưu trạng thái tạm
+let currentSensorData = { temp: null, hum: null, soil: null };
+let currentPumpState = null;
+let currentMode = 'AUTO';
 let lastSaveTime = 0;
-const SAVE_INTERVAL = 5 * 60 * 1000; // 5 phút
+const SAVE_INTERVAL = 5000; // 5s để kiểm thử, thực tế đặt 5 phút lấy dữ liệu 1 lần
 
-// Biến tạm lưu giá trị hiện tại của 3 cảm biến
-let currentSensorData = {
-  temp: null,
-  hum: null,
-  soil: null
-};
-
-// --- 4. XỬ LÝ LOGIC ---
 mqttClient.on("connect", () => {
-  console.log("Backend đã kết nối HiveMQ!");
+  console.log("✅ MQTT: Đã kết nối HiveMQ!");
   mqttClient.subscribe("iot/#");
 });
 
-// Biến lưu trạng thái bơm hiện tại và mode
-let currentPumpState = null;
-let currentMode = 'AUTO';
-
-// Hàm lưu dữ liệu cảm biến vào database
-function saveSensorData() {
-  // Chỉ lưu nếu có đủ cả 3 giá trị
-  if (currentSensorData.temp !== null && currentSensorData.hum !== null && currentSensorData.soil !== null) {
-    // Tạo timestamp theo giờ Việt Nam (UTC+7)
-    const now = new Date();
-    const vnTime = new Date(now.getTime() + (7 * 60 * 60 * 1000));
-    const timestamp = vnTime.toISOString().replace('T', ' ').slice(0, 19);
-    
-    const sql = `INSERT INTO measurements (temp, hum, soil, timestamp) VALUES (?, ?, ?, ?)`;
-    db.run(sql, [currentSensorData.temp, currentSensorData.hum, currentSensorData.soil, timestamp], function (err) {
-      if (err) return console.error("Lỗi lưu DB:", err.message);
-      console.log(`Đã lưu measurements: temp=${currentSensorData.temp}, hum=${currentSensorData.hum}, soil=${currentSensorData.soil}, time=${timestamp}`);
-    });
-  }
-}
-
-mqttClient.on("message", (topic, message) => {
+mqttClient.on("message", async (topic, message) => {
   const payload = message.toString();
-  console.log(`[${topic}]: ${payload}`);
+  console.log(`📩 [${topic}]: ${payload}`);
 
-  // A. Gửi xuống Web ngay lập tức (Real-time)
+  // Gửi xuống Web (Real-time)
   io.emit("mqtt-message", { topic, payload });
 
-  // B. Cập nhật dữ liệu cảm biến hiện tại
-  if (topic === "iot/temp") {
-    currentSensorData.temp = parseFloat(payload);
-  } else if (topic === "iot/hum") {
-    currentSensorData.hum = parseFloat(payload);
-  } else if (topic === "iot/soil") {
-    currentSensorData.soil = parseFloat(payload);
-  }
-  
-  // C. Lưu vào Database mỗi 5 phút (nếu đủ dữ liệu)
-  if (topic === "iot/soil" || topic === "iot/temp" || topic === "iot/hum") {
+  // Cập nhật biến tạm
+  if (topic === "iot/temp") currentSensorData.temp = parseFloat(payload);
+  else if (topic === "iot/hum") currentSensorData.hum = parseFloat(payload);
+  else if (topic === "iot/soil") currentSensorData.soil = parseFloat(payload);
+
+  // Lưu dữ liệu cảm biến (Mỗi 5 phút nếu đủ 3 chỉ số)
+  if (["iot/soil", "iot/temp", "iot/hum"].includes(topic)) {
     const now = Date.now();
     if (now - lastSaveTime >= SAVE_INTERVAL) {
-      lastSaveTime = now;
-      saveSensorData();
+      if (currentSensorData.temp !== null && currentSensorData.soil !== null) {
+        lastSaveTime = now;
+        try {
+          await Measurement.create(currentSensorData);
+          console.log("💾 Đã lưu dữ liệu cảm biến vào MongoDB");
+        } catch (e) { console.error("Lỗi lưu measurement:", e); }
+      }
     }
   }
-  
-  // D. Lưu lịch sử bật/tắt bơm
+
+  // Lưu lịch sử bơm
   if (topic === "iot/pump" && payload !== currentPumpState) {
     currentPumpState = payload;
-    // Tạo timestamp theo giờ Việt Nam (UTC+7)
-    const now = new Date();
-    const vnTime = new Date(now.getTime() + (7 * 60 * 60 * 1000));
-    const timestamp = vnTime.toISOString().replace('T', ' ').slice(0, 19);
-    
-    const sql = `INSERT INTO pump_logs (action, mode, timestamp) VALUES (?, ?, ?)`;
-    db.run(sql, [payload, currentMode, timestamp], function (err) {
-      if (err) return console.error("Lỗi lưu pump log:", err.message);
-      console.log(`Đã lưu pump log: ${payload} (${currentMode}) at ${timestamp}`);
-    });
+    try {
+      await PumpLog.create({ action: payload, mode: currentMode });
+      console.log(`💾 Đã lưu Pump Log: ${payload}`);
+    } catch (e) { console.error("Lỗi lưu pump log:", e); }
   }
-  
-  // E. Cập nhật mode hiện tại
+
+  // Cập nhật Mode
   if (topic === "iot/mode") {
     currentMode = payload;
-    console.log(`Chuyển chế độ: ${currentMode}`);
+    console.log(`🔄 Chế độ hiện tại: ${currentMode}`);
   }
 });
 
-// --- 5. TẠO API LẤY LỊCH SỬ ---
-app.get("/api/history", (req, res) => {
-  // Lấy 10 dòng mới nhất
-  const sql = "SELECT * FROM measurements ORDER BY id DESC LIMIT 10";
-  db.all(sql, [], (err, rows) => {
-    if (err) {
-      res.status(400).json({ error: err.message });
-      return;
-    }
-    res.json({ message: "success", data: rows });
-  });
+// Các hàm API
+// API lấy lịch sử đo (cho bảng lịch sử)
+app.get("/api/history", async (req, res) => {
+  try {
+    const data = await Measurement.find().sort({ timestamp: -1 }).limit(10);
+    res.json({ message: "success", data });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// API lấy lịch sử bật/tắt bơm
-app.get("/api/pump-history", (req, res) => {
-  const sql = "SELECT * FROM pump_logs ORDER BY id DESC LIMIT 20";
-  db.all(sql, [], (err, rows) => {
-    if (err) {
-      res.status(400).json({ error: err.message });
-      return;
-    }
-    res.json({ message: "success", data: rows });
-  });
+// API lấy lịch sử bơm
+app.get("/api/pump-history", async (req, res) => {
+  try {
+    const data = await PumpLog.find().sort({ timestamp: -1 }).limit(20);
+    res.json({ message: "success", data });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// API lấy thống kê bơm
-app.get("/api/pump-stats", (req, res) => {
-  const period = req.query.period || 'day';
-  let timeFilter = '-1 day';
-  if (period === 'week') timeFilter = '-7 days';
-  else if (period === 'month') timeFilter = '-30 days';
-  
-  const sql = `
-    SELECT 
-      COUNT(*) as total_switches,
-      SUM(CASE WHEN action = 'ON' THEN 1 ELSE 0 END) as on_count,
-      SUM(CASE WHEN action = 'OFF' THEN 1 ELSE 0 END) as off_count,
-      SUM(CASE WHEN mode = 'AUTO' THEN 1 ELSE 0 END) as auto_count,
-      SUM(CASE WHEN mode = 'MANUAL' THEN 1 ELSE 0 END) as manual_count
-    FROM pump_logs 
-    WHERE timestamp >= datetime('now', '${timeFilter}')
-  `;
-  
-  db.get(sql, [], (err, row) => {
-    if (err) {
-      res.status(400).json({ error: err.message });
-      return;
-    }
-    res.json({ message: "success", data: row });
-  });
+// API thống kê bơm (Pump Stats)
+app.get("/api/pump-stats", async (req, res) => {
+  try {
+    const period = req.query.period || 'day';
+    let dateFilter = new Date();
+    if (period === 'day') dateFilter.setDate(dateFilter.getDate() - 1);
+    else if (period === 'week') dateFilter.setDate(dateFilter.getDate() - 7);
+    else if (period === 'month') dateFilter.setDate(dateFilter.getDate() - 30);
+
+    const logs = await PumpLog.find({ timestamp: { $gte: dateFilter } });
+
+    const stats = {
+      total_switches: logs.length,
+      on_count: logs.filter(l => l.action === 'ON').length,
+      off_count: logs.filter(l => l.action === 'OFF').length,
+      auto_count: logs.filter(l => l.mode === 'AUTO').length,
+      manual_count: logs.filter(l => l.mode === 'MANUAL').length
+    };
+    res.json({ message: "success", data: stats });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// API lấy threshold settings
-app.get("/api/threshold", (req, res) => {
-  db.get("SELECT value FROM settings WHERE key = 'threshold_start'", (err, startRow) => {
-    if (err) {
-      res.status(400).json({ error: err.message });
-      return;
-    }
-    db.get("SELECT value FROM settings WHERE key = 'threshold_stop'", (err, stopRow) => {
-      if (err) {
-        res.status(400).json({ error: err.message });
-        return;
-      }
-      res.json({ 
-        message: "success", 
-        data: { 
-          start: startRow ? parseInt(startRow.value) : 40,
-          stop: stopRow ? parseInt(stopRow.value) : 45
-        } 
-      });
+// API lấy/cập nhật ngưỡng (Threshold)
+app.get("/api/threshold", async (req, res) => {
+  try {
+    const start = await Setting.findOne({ key: "threshold_start" });
+    const stop = await Setting.findOne({ key: "threshold_stop" });
+    res.json({ 
+      message: "success", 
+      data: { 
+        start: start ? parseInt(start.value) : 40, 
+        stop: stop ? parseInt(stop.value) : 45 
+      } 
     });
-  });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// API cập nhật threshold settings
-app.post("/api/threshold", express.json(), (req, res) => {
-  const { start, stop } = req.body;
-  
-  if (!start || !stop) {
-    res.status(400).json({ error: "Missing start or stop value" });
-    return;
-  }
-  
-  if (parseInt(stop) <= parseInt(start)) {
-    res.status(400).json({ error: "Stop value must be greater than start value" });
-    return;
-  }
-  
-  // Cập nhật database
-  db.run("INSERT OR REPLACE INTO settings (key, value) VALUES ('threshold_start', ?)", [start.toString()], (err) => {
-    if (err) {
-      res.status(400).json({ error: err.message });
-      return;
-    }
-    db.run("INSERT OR REPLACE INTO settings (key, value) VALUES ('threshold_stop', ?)", [stop.toString()], (err) => {
-      if (err) {
-        res.status(400).json({ error: err.message });
-        return;
-      }
-      
-      console.log(`Đã cập nhật ngưỡng: ${start}-${stop}%`);
-      
-      // Gửi lệnh xuống ESP32 qua MQTT
-      const message = `${start},${stop}`;
-      mqttClient.publish('iot/cmd/threshold', message, (err) => {
-        if (err) {
-          console.error('Lỗi gửi threshold xuống ESP32:', err);
-        } else {
-          console.log(`Đã gửi threshold xuống ESP32: ${message}`);
-        }
-      });
-      
-      res.json({ 
-        message: "success",
-        data: { start: parseInt(start), stop: parseInt(stop) }
-      });
-    });
-  });
+app.post("/api/threshold", async (req, res) => {
+  try {
+    const { start, stop } = req.body;
+    if (parseInt(stop) <= parseInt(start)) return res.status(400).json({ error: "Stop > Start" });
+
+    await Setting.findOneAndUpdate({ key: "threshold_start" }, { value: start }, { upsert: true });
+    await Setting.findOneAndUpdate({ key: "threshold_stop" }, { value: stop }, { upsert: true });
+
+    // Gửi xuống ESP32
+    mqttClient.publish('iot/cmd/threshold', `${start} -> ${stop}`);
+    res.json({ message: "success", data: { start, stop } });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// API lấy dữ liệu dashboard mới nhất (từ MQTT real-time)
+// API dữ liệu hiện tại
 app.get("/api/current-data", (req, res) => {
-  // Trả về dữ liệu real-time từ MQTT, không lấy từ database
   res.json({ 
     message: "success", 
-    data: {
-      temp: currentSensorData.temp,
-      hum: currentSensorData.hum,
-      soil: currentSensorData.soil,
-      pump: currentPumpState,
-      mode: currentMode
-    }
+    data: { ...currentSensorData, pump: currentPumpState, mode: currentMode } 
   });
 });
 
-// API quản lý lịch tưới
-app.get("/api/schedules", (req, res) => {
-  const sql = "SELECT * FROM schedules ORDER BY time ASC";
-  db.all(sql, [], (err, rows) => {
-    if (err) {
-      res.status(400).json({ error: err.message });
-      return;
-    }
-    res.json({ message: "success", data: rows });
-  });
+// API quản lý lịch tưới (Schedules)
+app.get("/api/schedules", async (req, res) => {
+  try {
+    const schedules = await Schedule.find().sort({ time: 1 });
+    res.json({ message: "success", data: schedules });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post("/api/schedules", express.json(), (req, res) => {
-  const { time, days, duration } = req.body;
-  const daysJson = JSON.stringify(days || []);
-  const sql = `INSERT INTO schedules (time, days, duration) VALUES (?, ?, ?)`;
-  db.run(sql, [time, daysJson, duration], function(err) {
-    if (err) {
-      res.status(400).json({ error: err.message });
-      return;
-    }
-    res.json({ message: "success", id: this.lastID });
-  });
+app.post("/api/schedules", async (req, res) => {
+  try {
+    const newSchedule = await Schedule.create(req.body);
+    res.json({ message: "success", id: newSchedule._id });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.delete("/api/schedules/:id", (req, res) => {
-  const id = req.params.id;
-  const sql = `DELETE FROM schedules WHERE id = ?`;
-  db.run(sql, [id], function(err) {
-    if (err) {
-      res.status(400).json({ error: err.message });
-      return;
-    }
+app.delete("/api/schedules/:id", async (req, res) => {
+  try {
+    await Schedule.findByIdAndDelete(req.params.id);
     res.json({ message: "success" });
-  });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.put("/api/schedules/:id", express.json(), (req, res) => {
-  const id = req.params.id;
-  const { time, days, duration, enabled } = req.body;
-  
-  // Nếu chỉ cập nhật enabled (toggle)
-  if (enabled !== undefined && !time && !days) {
-    const sql = `UPDATE schedules SET enabled = ? WHERE id = ?`;
-    db.run(sql, [enabled, id], function(err) {
-      if (err) {
-        res.status(400).json({ error: err.message });
-        return;
-      }
-      res.json({ message: "success" });
-    });
-  } 
-  // Nếu cập nhật đầy đủ (từ modal edit)
-  else {
-    const daysJson = JSON.stringify(days || []);
-    const sql = `UPDATE schedules SET time = ?, days = ?, duration = ?, enabled = ? WHERE id = ?`;
-    db.run(sql, [time, daysJson, duration || 60, enabled !== undefined ? enabled : 1, id], function(err) {
-      if (err) {
-        res.status(400).json({ error: err.message });
-        return;
-      }
-      res.json({ message: "success" });
-    });
-  }
+app.put("/api/schedules/:id", async (req, res) => {
+  try {
+    await Schedule.findByIdAndUpdate(req.params.id, req.body);
+    res.json({ message: "success" });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// API lấy dữ liệu cho biểu đồ
-app.get("/api/chart-data", (req, res) => {
-  const period = req.query.period || 'day';
-  let sql = '';
-  
-  if (period === 'day') {
-    // 24h gần nhất: Lấy tất cả dữ liệu thô (mỗi 5 phút)
-    sql = `
-      SELECT id, temp, hum, soil, timestamp
-      FROM measurements 
-      WHERE timestamp >= datetime('now', '-1 day')
-      ORDER BY timestamp ASC
-    `;
-  } else if (period === 'week') {
-    // 7 ngày gần nhất: Nhóm theo giờ
-    sql = `
-      SELECT 
-        AVG(temp) as temp,
-        AVG(hum) as hum,
-        AVG(soil) as soil,
-        strftime('%Y-%m-%d %H:00', timestamp) as timestamp
-      FROM measurements 
-      WHERE timestamp >= datetime('now', '-7 days')
-      GROUP BY strftime('%Y-%m-%d %H:00', timestamp)
-      ORDER BY timestamp ASC
-    `;
-  } else if (period === 'month') {
-    // 30 ngày gần nhất: Nhóm theo ngày
-    sql = `
-      SELECT 
-        AVG(temp) as temp,
-        AVG(hum) as hum,
-        AVG(soil) as soil,
-        strftime('%Y-%m-%d', timestamp) as timestamp
-      FROM measurements 
-      WHERE timestamp >= datetime('now', '-30 days')
-      GROUP BY strftime('%Y-%m-%d', timestamp)
-      ORDER BY timestamp ASC
-    `;
-  }
-  
-  db.all(sql, [], (err, rows) => {
-    if (err) {
-      res.status(400).json({ error: err.message });
-      return;
-    }
-    res.json({ message: "success", data: rows });
-  });
+// API biểu đồ (Chart Data)
+app.get("/api/chart-data", async (req, res) => {
+  try {
+    const period = req.query.period || 'day';
+    let dateFilter = new Date();
+    
+    // Logic lọc thời gian
+    if (period === 'day') dateFilter.setDate(dateFilter.getDate() - 1);
+    else if (period === 'week') dateFilter.setDate(dateFilter.getDate() - 7);
+    else if (period === 'month') dateFilter.setDate(dateFilter.getDate() - 30);
+
+    const data = await Measurement.find({ timestamp: { $gte: dateFilter } })
+      .sort({ timestamp: 1 })
+      .limit(2000); 
+
+    res.json({ message: "success", data });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 6. LOGIC LỊCH TƯỚI TỰ ĐỘNG ---
+// Hàm set lịch tưới tự động
 function checkSchedules() {
   const now = new Date();
   const currentTime = now.getHours().toString().padStart(2, '0') + ':' + 
-                     now.getMinutes().toString().padStart(2, '0');
-  const currentDay = now.getDay(); // 0=CN, 1=T2, 2=T3, ..., 6=T7
-  
-  const sql = `SELECT * FROM schedules WHERE enabled = 1 AND time = ?`;
-  db.all(sql, [currentTime], (err, rows) => {
-    if (err) return console.error('Lỗi kiểm tra lịch:', err.message);
-    
-    rows.forEach(schedule => {
-      // Parse days từ JSON
-      let days = [];
-      try {
-        days = JSON.parse(schedule.days || '[]');
-      } catch (e) {
-        days = [];
-      }
-      
-      // Kiểm tra xem ngày hiện tại có trong danh sách không
-      if (days.length === 0 || days.includes(currentDay)) {
-        console.log(`Kích hoạt lịch tưới: ${schedule.time} - ${schedule.duration}s`);
-        mqttClient.publish('iot/cmd/schedule', `${schedule.duration}`);
+                      now.getMinutes().toString().padStart(2, '0');
+  const currentDay = now.getDay(); // 0-6
+
+  Schedule.find({ enabled: true, time: currentTime }).then(schedules => {
+    schedules.forEach(sch => {
+      if (sch.days.length === 0 || sch.days.includes(currentDay)) {
+        console.log(`⏰ Kích hoạt lịch tưới: ${sch.time} (${sch.duration}s)`);
+        mqttClient.publish('iot/cmd/schedule', `${sch.duration}`);
       }
     });
-  });
+  }).catch(e => console.error(e));
 }
+setInterval(checkSchedules, 60000); // Check mỗi phút
 
-// Kiểm tra lịch mỗi phút
-setInterval(checkSchedules, 60000);
-
-// --- 7. SOCKET IO (NHẬN LỆNH TỪ WEB) ---
+// Socket IO nhận lệnh từ Web
 io.on("connection", (socket) => {
+  console.log(`🔌 Web connected: ${socket.id}`);
   socket.on("control-command", (data) => {
-    console.log(`Web lệnh: ${data.topic} -> ${data.message}`);
+    console.log(`📤 Web lệnh: ${data.topic} -> ${data.message}`);
     mqttClient.publish(data.topic, data.message);
   });
 });
 
-// --- 8. CHẠY SERVER (CỔNG 3001) ---
-const PORT = 3001;
-server.listen(PORT, () => {
-  console.log(`Server chạy tại: http://localhost:${PORT}`);
+// Chạy Server
+const PORT = process.env.PORT || 3001;
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 Server chạy tại http://localhost:${PORT}`);
 });
