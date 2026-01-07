@@ -338,19 +338,27 @@ function editDevice(deviceId) {
   if (!newName) return;
   
   fetchWithAuth(`/api/devices/${deviceId}`, {
-    method: 'PATCH',
+    method: 'PUT',
     body: JSON.stringify({ name: newName })
   })
-  .then(res => res.json())
+  .then(res => {
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    }
+    return res.json();
+  })
   .then(result => {
     if (result.success) {
       alert('Cập nhật thành công!');
       loadDevices();
     } else {
-      throw new Error(result.error);
+      throw new Error(result.error || 'Cập nhật thất bại');
     }
   })
-  .catch(err => alert(err.message));
+  .catch(err => {
+    console.error('Edit device error:', err);
+    alert('Lỗi: ' + err.message);
+  });
 }
 
 // Device selector change
@@ -403,8 +411,9 @@ function showView(viewName) {
   // Load dữ liệu nếu cần
   if (viewName === 'dashboard') {
     loadDashboardData();
+    loadThresholdSettingsOnce(); // Load ngưỡng 1 lần khi vào dashboard
   } else if (viewName === 'control') {
-    loadThresholdSettings();
+    loadThresholdSettingsOnce();
   } else if (viewName === 'chart') {
     loadChartData(currentChartPeriod);
   } else if (viewName === 'stats') {
@@ -457,8 +466,26 @@ function loadDashboardData() {
     })
     .catch((error) => console.error("Lỗi tải dữ liệu dashboard:", error));
   
-  // Load threshold settings
-  loadThresholdSettings();
+  // KHÔNG load threshold settings trong auto-refresh
+  // Chỉ load 1 lần khi chọn device hoặc manual refresh
+}
+
+// Load threshold settings riêng (không auto-refresh)
+function loadThresholdSettingsOnce() {
+  if (!selectedDeviceId) return;
+  
+  fetchWithAuth(`/api/threshold?deviceId=${selectedDeviceId}`)
+    .then(response => response.json())
+    .then(result => {
+      if (result.message === 'success') {
+        const { start, stop } = result.data;
+        document.getElementById('threshold-start').value = start;
+        document.getElementById('threshold-stop').value = stop;
+        document.getElementById('current-threshold').innerText = `${start}-${stop}%`;
+        console.log('Đã load ngưỡng:', result.data);
+      }
+    })
+    .catch(error => console.error('Lỗi load threshold:', error));
 }
 
 // 1. KẾT NỐI SERVER
@@ -491,14 +518,24 @@ socket.on("mqtt-message", (data) => {
   
   console.log(`📥 Nhận MQTT: [${topic}] = ${payload}`);
 
-  // Cập nhật số liệu hiển thị tức thì
-  if (topic === "iot/soil")
+  // Trích xuất deviceId từ topic (format: iot/{deviceId}/sensor/{type} hoặc iot/{deviceId}/status/{type})
+  const topicParts = topic.split('/');
+  const deviceIdFromTopic = topicParts[1]; // iot/ESP32_xxxxx/sensor/temp -> ESP32_xxxxx
+  
+  // Chỉ cập nhật nếu dữ liệu từ thiết bị đang được chọn
+  if (!selectedDeviceId || deviceIdFromTopic !== selectedDeviceId) {
+    console.log(`⏭️ Bỏ qua dữ liệu từ ${deviceIdFromTopic} (đang xem ${selectedDeviceId})`);
+    return;
+  }
+
+  // Cập nhật số liệu hiển thị tức thì (chỉ cho thiết bị được chọn)
+  if (topic.includes("/sensor/soil"))
     document.getElementById("soil-val").innerText = payload;
-  else if (topic === "iot/temp")
+  else if (topic.includes("/sensor/temp"))
     document.getElementById("temp-val").innerText = payload;
-  else if (topic === "iot/hum")
+  else if (topic.includes("/sensor/hum"))
     document.getElementById("hum-val").innerText = payload;
-  else if (topic === "iot/pump") {
+  else if (topic.includes("/status/pump")) {
     const el = document.getElementById("pump-val");
     if (payload === "ON") {
       el.innerText = "ĐANG CHẠY";
@@ -507,23 +544,20 @@ socket.on("mqtt-message", (data) => {
       el.innerText = "ĐÃ TẮT";
       el.style.color = "#c62828";
     }
-  } else if (topic === "iot/mode") updateModeUI(payload);
+    // Cập nhật bảng lịch sử khi có thay đổi bơm
+    loadHistory();
+  } else if (topic.includes("/status/mode")) updateModeUI(payload);
 
-  // Nhận thông tin ngưỡng từ ESP32
-  else if (topic === "iot/threshold") {
+  // Nhận thông tin ngưỡng từ ESP32 - CHỈ CÂP NHẬT HIỂN THỊ, KHÔNG GHI ĐÈ INPUT
+  else if (topic.includes("/threshold")) {
     const parts = payload.split(',');
     if (parts.length === 2) {
       const start = parts[0];
       const stop = parts[1];
-      document.getElementById('threshold-start').value = start;
-      document.getElementById('threshold-stop').value = stop;
+      // Chỉ cập nhật hiển thị, không đổi giá trị input để user có thể chỉnh sửa
       document.getElementById('current-threshold').innerText = `${start}-${stop}%`;
+      console.log(`📊 Ngưỡng hiện tại từ device: ${start}-${stop}%`);
     }
-  }
-
-  // Cập nhật bảng lịch sử khi có thay đổi bơm
-  if (topic === "iot/pump") {
-    loadHistory();
   }
 });
 
@@ -622,6 +656,15 @@ function setMode(mode) {
   }, 2000);
 }
 
+// Wrapper functions for HTML onclick handlers
+function switchToAuto() {
+  setMode('AUTO');
+}
+
+function switchToManual() {
+  setMode('MANUAL');
+}
+
 // Biến chống spam click
 let pumpControlTimeout = null;
 
@@ -681,6 +724,15 @@ function controlPump(action) {
   }, 800);
 }
 
+// Wrapper functions for pump control buttons
+function turnPumpOn() {
+  controlPump('ON');
+}
+
+function turnPumpOff() {
+  controlPump('OFF');
+}
+
 function updateThreshold() {
   if (!selectedDeviceId) {
     alert('Vui lòng chọn thiết bị!');
@@ -733,20 +785,8 @@ function updateThreshold() {
 
 // Load threshold từ server khi khởi động
 function loadThresholdSettings() {
-  if (!selectedDeviceId) return;
-  
-  fetchWithAuth(`/api/threshold?deviceId=${selectedDeviceId}`)
-    .then(response => response.json())
-    .then(result => {
-      if (result.message === 'success') {
-        const { start, stop } = result.data;
-        document.getElementById('threshold-start').value = start;
-        document.getElementById('threshold-stop').value = stop;
-        document.getElementById('current-threshold').innerText = `${start}-${stop}%`;
-        console.log('Đã load ngưỡng:', result.data);
-      }
-    })
-    .catch(error => console.error('Lỗi load threshold:', error));
+  // Giữ tên hàm cũ để tương thích, nhưng gọi hàm mới
+  loadThresholdSettingsOnce();
 }
 
 // Quản lý lịch tưới
@@ -1046,7 +1086,12 @@ function loadPumpStats(period) {
 // Hàm tải dữ liệu biểu đồ
 function loadChartData(period = 'day') {
   if (!selectedDeviceId) {
-    console.warn('No device selected');
+    console.warn('No device selected - cannot load chart');
+    // Xóa biểu đồ cũ nếu có
+    if (tempHumChart) {
+      tempHumChart.destroy();
+      tempHumChart = null;
+    }
     return;
   }
   
@@ -1080,10 +1125,19 @@ function loadChartData(period = 'day') {
         }
       });
       
-      // Giá trị
-      const tempValues = rows.map(r => parseFloat(r.temp));
-      const humValues = rows.map(r => parseFloat(r.hum));
-      const soilValues = rows.map(r => parseFloat(r.soil));
+      // Giá trị - lọc và xử lý null/undefined
+      const tempValues = rows.map(r => {
+        const val = parseFloat(r.temp);
+        return (isNaN(val) || val === null) ? null : val;
+      });
+      const humValues = rows.map(r => {
+        const val = parseFloat(r.hum);
+        return (isNaN(val) || val === null) ? null : val;
+      });
+      const soilValues = rows.map(r => {
+        const val = parseFloat(r.soil);
+        return (isNaN(val) || val === null) ? null : val;
+      });
       
       // Tạo biểu đồ
       const ctx = document.getElementById('tempHumChart').getContext('2d');
@@ -1105,7 +1159,8 @@ function loadChartData(period = 'day') {
               tension: 0.4,
               pointRadius: 0,
               borderWidth: 2,
-              yAxisID: 'y'
+              yAxisID: 'y',
+              spanGaps: true
             },
             {
               label: 'Độ ẩm không khí',
@@ -1115,7 +1170,8 @@ function loadChartData(period = 'day') {
               tension: 0.4,
               pointRadius: 0,
               borderWidth: 2,
-              yAxisID: 'y1'
+              yAxisID: 'y1',
+              spanGaps: true
             },
             {
               label: 'Độ ẩm đất',
@@ -1125,7 +1181,8 @@ function loadChartData(period = 'day') {
               tension: 0.4,
               pointRadius: 0,
               borderWidth: 2,
-              yAxisID: 'y1'
+              yAxisID: 'y1',
+              spanGaps: true
             }
           ]
         },

@@ -74,6 +74,14 @@ async function initializeDefaultAdmin() {
 // Khởi tạo ngưỡng mặc định (Global settings)
 async function initSettings() {
   try {
+    // Xóa index cũ nếu tồn tại (fix lỗi E11000)
+    try {
+      await Setting.collection.dropIndex('key_1');
+      console.log('Đã xóa index cũ key_1');
+    } catch (e) {
+      // Index không tồn tại, bỏ qua
+    }
+    
     const start = await Setting.findOne({ deviceId: null, key: "threshold_start" });
     if (!start) await Setting.create({ deviceId: null, key: "threshold_start", value: "40" });
     
@@ -94,6 +102,10 @@ const mqttClient = mqtt.connect(process.env.MQTT_HOST, {
 
 // Cache dữ liệu realtime từ MQTT theo deviceId
 const deviceDataCache = new Map(); // { deviceId: { temp, hum, soil, pump, mode, lastUpdate } }
+
+// Cache timestamp lần lưu DB cuối cùng cho mỗi device (throttle 5s)
+const lastSaveTimestamp = new Map(); // { deviceId: timestamp }
+const SAVE_INTERVAL = 5000; // 5 giây
 
 // Biến lưu trạng thái tạm (cho tracking mode)
 let currentPumpState = null;
@@ -135,7 +147,7 @@ mqttClient.on("message", async (topic, message) => {
             allowDataView: true
           }
         });
-        console.log('🆕 Device mới tự động đăng ký:', deviceId);
+        console.log('Device mới tự động đăng ký:', deviceId);
         io.emit('new-device-registered', { deviceId, status: 'pending' });
       } catch (err) {
         if (err.code === 11000) {
@@ -153,18 +165,35 @@ mqttClient.on("message", async (topic, message) => {
       await device.save();
     }
     
-    // Lưu dữ liệu vào Measurement
-    const value = parseFloat(payload);
-    const updateData = { deviceId, [sensorType]: value };
-    await Measurement.create(updateData);
-    
     // Cập nhật cache realtime
     if (!deviceDataCache.has(deviceId)) {
       deviceDataCache.set(deviceId, { temp: null, hum: null, soil: null, pump: null, mode: 'AUTO', lastUpdate: new Date() });
     }
     const cache = deviceDataCache.get(deviceId);
+    const value = parseFloat(payload);
     cache[sensorType] = value;
     cache.lastUpdate = new Date();
+    
+    // Chỉ lưu vào DB khi có đủ cả 3 giá trị hợp lệ VÀ đã qua 5s kể từ lần lưu trước
+    if (cache.temp !== null && cache.hum !== null && cache.soil !== null) {
+      const now = Date.now();
+      const lastSave = lastSaveTimestamp.get(deviceId) || 0;
+      
+      if (now - lastSave >= SAVE_INTERVAL) {
+        try {
+          await Measurement.create({ 
+            deviceId, 
+            temp: cache.temp, 
+            hum: cache.hum, 
+            soil: cache.soil 
+          });
+          lastSaveTimestamp.set(deviceId, now);
+          console.log(`Đã lưu dữ liệu: ${deviceId} (T:${cache.temp}, H:${cache.hum}, S:${cache.soil})`);
+        } catch (err) {
+          console.error('Lỗi lưu Measurement:', err);
+        }
+      }
+    }
     
     return;
   }
@@ -393,6 +422,12 @@ app.put("/api/schedules/:id", async (req, res) => {
 app.get("/api/chart-data", async (req, res) => {
   try {
     const period = req.query.period || 'day';
+    const deviceId = req.query.deviceId;
+    
+    if (!deviceId) {
+      return res.status(400).json({ error: 'Thiếu deviceId' });
+    }
+    
     let dateFilter = new Date();
     
     // Logic lọc thời gian
@@ -400,7 +435,10 @@ app.get("/api/chart-data", async (req, res) => {
     else if (period === 'week') dateFilter.setDate(dateFilter.getDate() - 7);
     else if (period === 'month') dateFilter.setDate(dateFilter.getDate() - 30);
 
-    const data = await Measurement.find({ timestamp: { $gte: dateFilter } })
+    const data = await Measurement.find({ 
+      deviceId: deviceId,
+      timestamp: { $gte: dateFilter } 
+    })
       .sort({ timestamp: 1 })
       .limit(2000); 
 

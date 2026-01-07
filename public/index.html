@@ -109,6 +109,9 @@
             <button class="menu-item" onclick="showView('devices')">
                 <i class="fa-solid fa-microchip"></i>
             </button>
+            <button class="menu-item" onclick="showView('schedule')">
+                <i class="fa-solid fa-clock"></i>
+            </button>
             <button class="menu-item" onclick="showView('chart')">
                 <i class="fa-solid fa-chart-line"></i>
             </button>
@@ -192,20 +195,20 @@
                         <h4>Cài Đặt Ngưỡng Tự Động</h4>
                         <div class="threshold-controls">
                             <div class="threshold-item">
-                                <label>Độ ẩm đất tối thiểu:</label>
-                                <input type="number" id="input-threshold-min" value="30">
+                                <label>Bật bơm khi độ ẩm đất <</label>
+                                <input type="number" id="threshold-start" min="0" max="100" value="40">
                                 <span>%</span>
                             </div>
                             <div class="threshold-item">
-                                <label>Độ ẩm đất tối đa:</label>
-                                <input type="number" id="input-threshold-max" value="60">
+                                <label>Tắt bơm khi độ ẩm đất ></label>
+                                <input type="number" id="threshold-stop" min="0" max="100" value="45">
                                 <span>%</span>
                             </div>
                             <button class="btn-update-threshold" onclick="updateThreshold()">
                                 <i class="fa-solid fa-check"></i> Cập Nhật Ngưỡng
                             </button>
                             <div class="threshold-status">
-                                <small>Ngưỡng hiện tại: <strong id="current-threshold-display">--</strong></small>
+                                <small>Ngưỡng hiện tại: <strong id="current-threshold">40-45%</strong></small>
                             </div>
                         </div>
                     </div>
@@ -249,49 +252,6 @@
                         <h4>Danh Sách Thiết Bị</h4>
                         <div class="devices-list" id="devices-list">
                             <p style="color: #666; font-style: italic;">Đang tải...</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div id="view-control" class="view">
-                <h3 class="view-title">Điều Khiển Bơm & Cài Đặt</h3>
-                <div class="control-section">
-                    <div class="control-card">
-                        <h4>Chế Độ Hoạt Động</h4>
-                        <div class="mode-buttons">
-                            <button id="btn-auto" class="btn-mode active" onclick="setMode('AUTO')">
-                                <i class="fa-solid fa-robot"></i> Tự Động
-                            </button>
-                            <button id="btn-manual" class="btn-mode inactive" onclick="setMode('MANUAL')">
-                                <i class="fa-solid fa-hand-pointer"></i> Thủ Công
-                            </button>
-                        </div>
-                        <div id="manual-controls" class="manual-panel">
-                            <button class="btn-pump btn-on" onclick="controlPump('ON')">BẬT BƠM</button>
-                            <button class="btn-pump btn-off" onclick="controlPump('OFF')">TẮT BƠM</button>
-                        </div>
-                    </div>
-
-                    <div class="control-card">
-                        <h4>Cài Đặt Ngưỡng Tự Động</h4>
-                        <div class="threshold-controls">
-                            <div class="threshold-item">
-                                <label>Bật bơm khi độ ẩm đất <</label>
-                                <input type="number" id="threshold-start" min="0" max="100" value="40">
-                                <span>%</span>
-                            </div>
-                            <div class="threshold-item">
-                                <label>Tắt bơm khi độ ẩm đất ></label>
-                                <input type="number" id="threshold-stop" min="0" max="100" value="45">
-                                <span>%</span>
-                            </div>
-                            <button class="btn-update-threshold" onclick="updateThreshold()">
-                                <i class="fa-solid fa-check"></i> Áp Dụng
-                            </button>
-                            <div class="threshold-status">
-                                <small>Ngưỡng hiện tại: <strong id="current-threshold">40-45%</strong></small>
-                            </div>
                         </div>
                     </div>
                 </div>
