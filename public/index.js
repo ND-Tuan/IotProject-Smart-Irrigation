@@ -1,3 +1,376 @@
+// ============ AUTHENTICATION ============
+let currentUser = null;
+let selectedDeviceId = null;
+const API_BASE = '';
+
+// Kiểm tra token và redirect nếu chưa đăng nhập
+async function checkAuth() {
+  const token = localStorage.getItem('token');
+  if (!token) {
+    showLoginScreen();
+    return false;
+  }
+  
+  try {
+    // Verify token with server
+    const res = await fetch('/api/auth/me', {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+    
+    if (!res.ok) throw new Error('Unauthorized');
+    
+    const data = await res.json();
+    currentUser = data.user; // Fix: data.user not data.data
+    showMainApp();
+    loadDevices();
+    return true;
+  } catch (err) {
+    console.error('Auth failed:', err);
+    localStorage.removeItem('token');
+    showLoginScreen();
+    return false;
+  }
+}
+
+// Đăng nhập
+async function login() {
+  const username = document.getElementById('login-username').value.trim();
+  const password = document.getElementById('login-password').value;
+  
+  if (!username || !password) {
+    alert('Vui lòng nhập đầy đủ thông tin!');
+    return;
+  }
+  
+  try {
+    const response = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ username, password })
+    });
+    
+    const result = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(result.error || 'Đăng nhập thất bại');
+    }
+    
+    localStorage.setItem('token', result.token);
+    currentUser = result.user;
+    showMainApp();
+    loadDevices();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+// Đăng ký
+async function register() {
+  const username = document.getElementById('login-username').value.trim();
+  const password = document.getElementById('login-password').value;
+  const email = username.includes('@') ? username : `${username}@local.dev`;
+  
+  if (!username || !password) {
+    alert('Vui lòng nhập đầy đủ thông tin!');
+    return;
+  }
+  
+  if (password.length < 6) {
+    alert('Mật khẩu phải có ít nhất 6 ký tự!');
+    return;
+  }
+  
+  try {
+    const response = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ username, email, password })
+    });
+    
+    const result = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(result.error || 'Đăng ký thất bại');
+    }
+    
+    alert('Đăng ký thành công! Đang đăng nhập...');
+    localStorage.setItem('token', result.token);
+    currentUser = result.user;
+    showMainApp();
+    loadDevices();
+    document.getElementById('login-password').value = '';
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+// Đăng xuất
+function logout() {
+  localStorage.removeItem('token');
+  localStorage.removeItem('selectedDeviceId');
+  currentUser = null;
+  selectedDeviceId = null;
+  showLoginScreen();
+}
+
+// Hiển thị màn hình đăng nhập
+function showLoginScreen() {
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('main-app').style.display = 'none';
+}
+
+// Hiển thị app chính
+function showMainApp() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('main-app').style.display = 'flex';
+  
+  // Update user info
+  document.getElementById('user-name').textContent = currentUser.username;
+  document.getElementById('user-role').textContent = 
+    currentUser.role === 'admin' ? 'Quản trị viên' : 
+    currentUser.role === 'user' ? 'Người dùng' : 'Xem dữ liệu';
+  
+  // Hiển thị menu quản lý thiết bị cho admin
+  if (currentUser.role === 'admin') {
+    document.getElementById('admin-menu-item').style.display = 'flex';
+  }
+}
+
+// Fetch with auth
+async function fetchWithAuth(url, options = {}) {
+  const token = localStorage.getItem('token');
+  if (!token) {
+    showLoginScreen();
+    throw new Error('Unauthorized');
+  }
+  
+  const headers = {
+    ...options.headers,
+    'Authorization': `Bearer ${token}`,
+    'Content-Type': 'application/json'
+  };
+  
+  const response = await fetch(url, { ...options, headers });
+  
+  if (response.status === 401) {
+    localStorage.removeItem('token');
+    showLoginScreen();
+    throw new Error('Unauthorized');
+  }
+  
+  return response;
+}
+
+// ============ DEVICE MANAGEMENT ============
+// Load danh sách devices
+async function loadDevices() {
+  try {
+    const response = await fetchWithAuth('/api/devices');
+    const result = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(result.error || 'Failed to load devices');
+    }
+    
+    const devices = result.data;
+    
+    // Update device selector
+    const deviceSelect = document.getElementById('device-select');
+    deviceSelect.innerHTML = '<option value="">-- Chọn thiết bị --</option>';
+    
+    devices.forEach(device => {
+      if (device.status === 'active') {
+        const option = document.createElement('option');
+        option.value = device.deviceId;
+        option.textContent = `${device.name} (${device.deviceId})`;
+        deviceSelect.appendChild(option);
+      }
+    });
+    
+    // Restore selected device
+    const savedDeviceId = localStorage.getItem('selectedDeviceId');
+    if (savedDeviceId && devices.find(d => d.deviceId === savedDeviceId)) {
+      deviceSelect.value = savedDeviceId;
+      selectedDeviceId = savedDeviceId;
+    } else if (devices.length > 0 && devices[0].status === 'active') {
+      selectedDeviceId = devices[0].deviceId;
+      deviceSelect.value = selectedDeviceId;
+      localStorage.setItem('selectedDeviceId', selectedDeviceId);
+    }
+    
+    // Update devices view
+    updateDevicesView(devices);
+    
+    // Load dashboard if device selected
+    if (selectedDeviceId) {
+      loadDashboardData();
+    }
+  } catch (err) {
+    console.error('Error loading devices:', err);
+  }
+}
+
+// Update devices view
+function updateDevicesView(devices) {
+  const online = devices.filter(d => d.isOnline).length;
+  const offline = devices.filter(d => !d.isOnline && d.status === 'active').length;
+  const pending = devices.filter(d => d.status === 'pending').length;
+  
+  document.getElementById('online-devices').textContent = online;
+  document.getElementById('offline-devices').textContent = offline;
+  document.getElementById('pending-devices').textContent = pending;
+  document.getElementById('total-devices').textContent = devices.length;
+  
+  const devicesList = document.getElementById('devices-list');
+  devicesList.innerHTML = '';
+  
+  devices.forEach(device => {
+    const deviceItem = document.createElement('div');
+    deviceItem.className = 'device-item';
+    
+    const statusClass = device.status === 'pending' ? 'pending' : 
+                       device.isOnline ? 'online' : 'offline';
+    const statusText = device.status === 'pending' ? 'Chờ duyệt' : 
+                      device.isOnline ? 'Hoạt động' : 'Offline';
+    
+    let actionsHTML = '';
+    if (currentUser.role === 'admin') {
+      if (device.status === 'pending') {
+        actionsHTML = `
+          <div class="device-actions">
+            <button class="btn-device-action btn-approve" onclick="approveDevice('${device.deviceId}')">
+              <i class="fa-solid fa-check"></i> Duyệt
+            </button>
+            <button class="btn-device-action btn-delete" onclick="deleteDevice('${device.deviceId}')">
+              <i class="fa-solid fa-trash"></i> Xóa
+            </button>
+          </div>
+        `;
+      } else {
+        actionsHTML = `
+          <div class="device-actions">
+            <button class="btn-device-action btn-edit" onclick="editDevice('${device.deviceId}')">
+              <i class="fa-solid fa-edit"></i> Sửa
+            </button>
+            <button class="btn-device-action btn-delete" onclick="deleteDevice('${device.deviceId}')">
+              <i class="fa-solid fa-trash"></i> Xóa
+            </button>
+          </div>
+        `;
+      }
+    }
+    
+    deviceItem.innerHTML = `
+      <div class="device-header">
+        <div class="device-name">
+          <i class="fa-solid fa-microchip"></i>
+          ${device.name}
+        </div>
+        <span class="device-status ${statusClass}">
+          <i class="fa-solid fa-circle"></i> ${statusText}
+        </span>
+      </div>
+      <div class="device-info">
+        <div><strong>ID:</strong> ${device.deviceId}</div>
+        <div><strong>Chủ sở hữu:</strong> ${device.owner?.username || 'N/A'}</div>
+        ${device.lastSeen ? `<div><strong>Lần cuối:</strong> ${new Date(device.lastSeen).toLocaleString('vi-VN')}</div>` : ''}
+      </div>
+      ${actionsHTML}
+    `;
+    
+    devicesList.appendChild(deviceItem);
+  });
+}
+
+// Approve device
+async function approveDevice(deviceId) {
+  if (!confirm(`Bạn có chắc muốn duyệt thiết bị ${deviceId}?`)) return;
+  
+  try {
+    const response = await fetchWithAuth(`/api/devices/${deviceId}/approve`, {
+      method: 'POST'
+    });
+    
+    if (!response.ok) {
+      const result = await response.json();
+      throw new Error(result.error || 'Failed to approve device');
+    }
+    
+    alert('Duyệt thiết bị thành công!');
+    loadDevices();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+// Delete device
+async function deleteDevice(deviceId) {
+  if (!confirm(`Bạn có chắc muốn xóa thiết bị ${deviceId}? Tất cả dữ liệu sẽ bị mất!`)) return;
+  
+  try {
+    const response = await fetchWithAuth(`/api/devices/${deviceId}`, {
+      method: 'DELETE'
+    });
+    
+    if (!response.ok) {
+      const result = await response.json();
+      throw new Error(result.error || 'Failed to delete device');
+    }
+    
+    alert('Xóa thiết bị thành công!');
+    if (selectedDeviceId === deviceId) {
+      selectedDeviceId = null;
+      localStorage.removeItem('selectedDeviceId');
+    }
+    loadDevices();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+// Edit device (placeholder)
+function editDevice(deviceId) {
+  const newName = prompt('Nhập tên mới cho thiết bị:');
+  if (!newName) return;
+  
+  fetchWithAuth(`/api/devices/${deviceId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ name: newName })
+  })
+  .then(res => res.json())
+  .then(result => {
+    if (result.success) {
+      alert('Cập nhật thành công!');
+      loadDevices();
+    } else {
+      throw new Error(result.error);
+    }
+  })
+  .catch(err => alert(err.message));
+}
+
+// Device selector change
+function onDeviceChange() {
+  const deviceSelect = document.getElementById('device-select');
+  selectedDeviceId = deviceSelect.value;
+  
+  if (selectedDeviceId) {
+    localStorage.setItem('selectedDeviceId', selectedDeviceId);
+    // Reload current view data
+    if (currentView === 'dashboard') loadDashboardData();
+    else if (currentView === 'chart') loadChartData(currentChartPeriod);
+    else if (currentView === 'stats') loadPumpStats(currentPeriod);
+    else if (currentView === 'history') loadHistory();
+    else if (currentView === 'schedule') loadSchedules();
+  }
+}
+
 const socket = io();
 
 let tempHumChart = null;
@@ -47,7 +420,12 @@ function showView(viewName) {
 
 // HÀM TẢI DỮ LIỆU DASHBOARD
 function loadDashboardData() {
-  fetch("/api/current-data")
+  if (!selectedDeviceId) {
+    console.warn('No device selected');
+    return;
+  }
+  
+  fetchWithAuth(`/api/current-data?deviceId=${selectedDeviceId}`)
     .then((response) => response.json())
     .then((result) => {
       const data = result.data;
@@ -153,7 +531,12 @@ socket.on("mqtt-message", (data) => {
 
 // 3. HÀM TẢI LỊCH SỬ BƠM
 function loadHistory() {
-  fetch("/api/pump-history")
+  if (!selectedDeviceId) {
+    console.warn('No device selected');
+    return;
+  }
+  
+  fetchWithAuth(`/api/pump-history?deviceId=${selectedDeviceId}`)
     .then((response) => response.json())
     .then((data) => {
       const rows = data.data;
@@ -215,8 +598,16 @@ function setMode(mode) {
     return;
   }
   
-  console.log(`Gửi lệnh chuyển mode: ${mode}`);
-  socket.emit("control-command", { topic: "iot/cmd/mode", message: mode });
+  if (!selectedDeviceId) {
+    alert('Vui lòng chọn thiết bị!');
+    return;
+  }
+  
+  console.log(`Gửi lệnh chuyển mode: ${mode} cho thiết bị ${selectedDeviceId}`);
+  socket.emit("control-command", { 
+    topic: `iot/${selectedDeviceId}/command/mode`, 
+    message: mode 
+  });
   
   // Cập nhật UI ngay lập tức
   updateModeUI(mode);
@@ -244,16 +635,24 @@ function controlPump(action) {
     return;
   }
   
+  if (!selectedDeviceId) {
+    alert('Vui lòng chọn thiết bị!');
+    return;
+  }
+  
   // Chống spam - chỉ cho phép 1 lệnh trong 800ms
   if (pumpControlTimeout) {
     console.log('⚠️ Vui lòng đợi...');
     return;
   }
   
-  console.log(`Gửi lệnh điều khiển bơm: ${action}`);
+  console.log(`Gửi lệnh điều khiển bơm: ${action} cho thiết bị ${selectedDeviceId}`);
   
   // Gửi lệnh ngay lập tức
-  socket.emit("control-command", { topic: "iot/cmd/pump", message: action });
+  socket.emit("control-command", { 
+    topic: `iot/${selectedDeviceId}/command/pump`, 
+    message: action 
+  });
   
   // Log confirmation
   console.log(`Đã gửi lệnh ${action} lên server`);
@@ -285,6 +684,11 @@ function controlPump(action) {
 }
 
 function updateThreshold() {
+  if (!selectedDeviceId) {
+    alert('Vui lòng chọn thiết bị!');
+    return;
+  }
+  
   const start = document.getElementById('threshold-start').value;
   const stop = document.getElementById('threshold-stop').value;
   
@@ -294,12 +698,13 @@ function updateThreshold() {
   }
   
   // Gửi lên server qua API
-  fetch('/api/threshold', {
+  fetchWithAuth('/api/threshold', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ start: parseInt(start), stop: parseInt(stop) })
+    body: JSON.stringify({ 
+      start: parseInt(start), 
+      stop: parseInt(stop),
+      deviceId: selectedDeviceId
+    })
   })
   .then(response => response.json())
   .then(result => {
@@ -330,7 +735,9 @@ function updateThreshold() {
 
 // Load threshold từ server khi khởi động
 function loadThresholdSettings() {
-  fetch('/api/threshold')
+  if (!selectedDeviceId) return;
+  
+  fetchWithAuth(`/api/threshold?deviceId=${selectedDeviceId}`)
     .then(response => response.json())
     .then(result => {
       if (result.message === 'success') {
@@ -412,7 +819,12 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function loadSchedules() {
-  fetch('/api/schedules')
+  if (!selectedDeviceId) {
+    console.warn('No device selected');
+    return;
+  }
+  
+  fetchWithAuth(`/api/schedules?deviceId=${selectedDeviceId}`)
     .then(response => response.json())
     .then(data => {
       const scheduleList = document.getElementById('schedule-list');
@@ -485,6 +897,11 @@ function closeAddModal() {
 }
 
 function saveNewSchedule() {
+  if (!selectedDeviceId) {
+    alert('Vui lòng chọn thiết bị!');
+    return;
+  }
+  
   const time = document.getElementById('add-schedule-time').value;
   
   if (!time) {
@@ -499,10 +916,14 @@ function saveNewSchedule() {
   
   const duration = 60;
   
-  fetch('/api/schedules', {
+  fetchWithAuth('/api/schedules', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ time, days: selectedDays, duration })
+    body: JSON.stringify({ 
+      time, 
+      days: selectedDays, 
+      duration,
+      deviceId: selectedDeviceId
+    })
   })
     .then(response => response.json())
     .then(() => {
@@ -564,9 +985,8 @@ function saveScheduleEdit() {
   
   const duration = 60;
   
-  fetch(`/api/schedules/${editingScheduleId}`, {
+  fetchWithAuth(`/api/schedules/${editingScheduleId}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ time, days: editSelectedDays, duration, enabled })
   })
     .then(response => response.json())
@@ -580,7 +1000,7 @@ function saveScheduleEdit() {
 function deleteScheduleFromModal() {
   if (!confirm('Xóa lịch tưới này?')) return;
   
-  fetch(`/api/schedules/${editingScheduleId}`, { method: 'DELETE' })
+  fetchWithAuth(`/api/schedules/${editingScheduleId}`, { method: 'DELETE' })
     .then(() => {
       closeEditModal();
       loadSchedules();
@@ -589,9 +1009,8 @@ function deleteScheduleFromModal() {
 }
 
 function toggleSchedule(id, enabled) {
-  fetch(`/api/schedules/${id}`, {
+  fetchWithAuth(`/api/schedules/${id}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabled: enabled ? 1 : 0 })
   })
     .catch(error => console.error('Lỗi cập nhật lịch:', error));
@@ -601,6 +1020,11 @@ function toggleSchedule(id, enabled) {
 let currentPeriod = 'day';
 
 function loadPumpStats(period) {
+  if (!selectedDeviceId) {
+    console.warn('No device selected');
+    return;
+  }
+  
   currentPeriod = period;
   
   document.querySelectorAll('.btn-period').forEach(btn => {
@@ -608,7 +1032,7 @@ function loadPumpStats(period) {
   });
   document.getElementById(`btn-${period}`).classList.add('active');
   
-  fetch(`/api/pump-stats?period=${period}`)
+  fetchWithAuth(`/api/pump-stats?period=${period}&deviceId=${selectedDeviceId}`)
     .then(response => response.json())
     .then(data => {
       const stats = data.data;
@@ -623,6 +1047,11 @@ function loadPumpStats(period) {
 
 // Hàm tải dữ liệu biểu đồ
 function loadChartData(period = 'day') {
+  if (!selectedDeviceId) {
+    console.warn('No device selected');
+    return;
+  }
+  
   currentChartPeriod = period;
   
   // Cập nhật nút active
@@ -633,7 +1062,7 @@ function loadChartData(period = 'day') {
   const btn = document.getElementById(btnId);
   if (btn) btn.classList.add('active');
   
-  fetch(`/api/chart-data?period=${period}`)
+  fetchWithAuth(`/api/chart-data?period=${period}&deviceId=${selectedDeviceId}`)
     .then(response => response.json())
     .then(data => {
       const rows = data.data;
@@ -795,11 +1224,258 @@ function loadChartData(period = 'day') {
 }
 
 // Cập nhật biểu đồ mỗi 5 phút
-setInterval(loadChartData, 300000);
+setInterval(() => {
+  if (selectedDeviceId) {
+    loadChartData(currentChartPeriod);
+  }
+}, 300000);
 
 // Tải dữ liệu lần đầu khi mở web
-loadDashboardData();
-loadHistory();
-loadChartData();
-loadSchedules();
-loadPumpStats('day');
+document.addEventListener('DOMContentLoaded', () => {
+  checkAuth();
+  
+  // Enter key support for login
+  const loginPassword = document.getElementById('login-password');
+  if (loginPassword) {
+    loginPassword.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        login();
+      }
+    });
+  }
+});
+
+// ============ ĐỔI MẬT KHẨU ============
+function openChangePasswordModal() {
+  document.getElementById('change-password-modal').style.display = 'flex';
+  document.getElementById('old-password').value = '';
+  document.getElementById('new-password').value = '';
+  document.getElementById('confirm-password').value = '';
+  document.getElementById('password-error').style.display = 'none';
+  document.getElementById('password-success').style.display = 'none';
+}
+
+function closeChangePasswordModal() {
+  document.getElementById('change-password-modal').style.display = 'none';
+}
+
+async function changePassword() {
+  const oldPassword = document.getElementById('old-password').value;
+  const newPassword = document.getElementById('new-password').value;
+  const confirmPassword = document.getElementById('confirm-password').value;
+  
+  const errorEl = document.getElementById('password-error');
+  const successEl = document.getElementById('password-success');
+  
+  // Reset messages
+  errorEl.style.display = 'none';
+  successEl.style.display = 'none';
+  
+  // Validate
+  if (!oldPassword || !newPassword || !confirmPassword) {
+    errorEl.textContent = 'Vui lòng điền đầy đủ thông tin!';
+    errorEl.style.display = 'block';
+    return;
+  }
+  
+  if (newPassword.length < 6) {
+    errorEl.textContent = 'Mật khẩu mới phải có ít nhất 6 ký tự!';
+    errorEl.style.display = 'block';
+    return;
+  }
+  
+  if (newPassword !== confirmPassword) {
+    errorEl.textContent = 'Mật khẩu mới không khớp!';
+    errorEl.style.display = 'block';
+    return;
+  }
+  
+  try {
+    const response = await fetchWithAuth('/api/auth/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ oldPassword, newPassword })
+    });
+    
+    const result = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(result.error || 'Đổi mật khẩu thất bại');
+    }
+    
+    successEl.textContent = 'Đổi mật khẩu thành công!';
+    successEl.style.display = 'block';
+    
+    // Đóng modal sau 2 giây
+    setTimeout(() => {
+      closeChangePasswordModal();
+    }, 2000);
+    
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.style.display = 'block';
+  }
+}
+
+// ============ QUẢN LÝ THIẾT BỊ (ADMIN) ============
+let allUsers = [];
+let allDevicesForManagement = [];
+
+async function openDeviceManagementModal() {
+  document.getElementById('device-management-modal').style.display = 'flex';
+  
+  // Load devices và users
+  await Promise.all([
+    loadDevicesForManagement(),
+    loadAllUsers()
+  ]);
+}
+
+function closeDeviceManagementModal() {
+  document.getElementById('device-management-modal').style.display = 'none';
+}
+
+async function loadDevicesForManagement() {
+  try {
+    const response = await fetchWithAuth('/api/devices');
+    const result = await response.json();
+    
+    allDevicesForManagement = result.data || [];
+    
+    const selectEl = document.getElementById('manage-device-select');
+    selectEl.innerHTML = '<option value="">-- Chọn thiết bị --</option>';
+    
+    allDevicesForManagement.forEach(device => {
+      const option = document.createElement('option');
+      option.value = device.deviceId;
+      option.textContent = `${device.name || device.deviceId} (${device.status})`;
+      selectEl.appendChild(option);
+    });
+    
+  } catch (err) {
+    console.error('Error loading devices:', err);
+  }
+}
+
+async function loadAllUsers() {
+  try {
+    const response = await fetchWithAuth('/api/auth/users');
+    const result = await response.json();
+    
+    allUsers = result.users || [];
+    
+  } catch (err) {
+    console.error('Error loading users:', err);
+  }
+}
+
+async function loadDevicePermissions() {
+  const deviceId = document.getElementById('manage-device-select').value;
+  
+  if (!deviceId) {
+    document.getElementById('device-permissions-section').style.display = 'none';
+    return;
+  }
+  
+  try {
+    const response = await fetchWithAuth(`/api/devices/${deviceId}`);
+    const result = await response.json();
+    const device = result.data;
+    
+    // Hiển thị section
+    document.getElementById('device-permissions-section').style.display = 'block';
+    
+    // Hiển thị danh sách users đang có quyền
+    const sharedUsersList = document.getElementById('shared-users-list');
+    sharedUsersList.innerHTML = '';
+    
+    if (device.sharedWith && device.sharedWith.length > 0) {
+      device.sharedWith.forEach(user => {
+        const userCard = document.createElement('div');
+        userCard.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 10px; background: #f5f5f5; border-radius: 5px; margin-bottom: 10px;';
+        userCard.innerHTML = `
+          <div>
+            <strong>${user.username}</strong> (${user.email})
+          </div>
+          <button onclick="removeUserAccess('${deviceId}', '${user._id}')" style="padding: 5px 10px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer;">
+            <i class="fa-solid fa-trash"></i> Xóa
+          </button>
+        `;
+        sharedUsersList.appendChild(userCard);
+      });
+    } else {
+      sharedUsersList.innerHTML = '<p style="color: #999;">Chưa có ai được chia sẻ thiết bị này</p>';
+    }
+    
+    // Populate user dropdown (loại trừ những user đã có quyền)
+    const userSelect = document.getElementById('user-to-share-select');
+    userSelect.innerHTML = '<option value="">-- Chọn người dùng --</option>';
+    
+    const sharedUserIds = device.sharedWith ? device.sharedWith.map(u => u._id) : [];
+    
+    allUsers.forEach(user => {
+      if (!sharedUserIds.includes(user._id) && user._id !== device.owner) {
+        const option = document.createElement('option');
+        option.value = user._id;
+        option.textContent = `${user.username} (${user.role})`;
+        userSelect.appendChild(option);
+      }
+    });
+    
+  } catch (err) {
+    console.error('Error loading device permissions:', err);
+    alert('Lỗi tải thông tin thiết bị: ' + err.message);
+  }
+}
+
+async function shareDeviceWithUser() {
+  const deviceId = document.getElementById('manage-device-select').value;
+  const userId = document.getElementById('user-to-share-select').value;
+  
+  if (!deviceId || !userId) {
+    alert('Vui lòng chọn thiết bị và người dùng!');
+    return;
+  }
+  
+  try {
+    const response = await fetchWithAuth(`/api/devices/${deviceId}/share`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId })
+    });
+    
+    const result = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(result.error || 'Lỗi share device');
+    }
+    
+    alert('Đã chia sẻ thiết bị thành công!');
+    loadDevicePermissions(); // Reload để cập nhật UI
+    
+  } catch (err) {
+    alert('Lỗi: ' + err.message);
+  }
+}
+
+async function removeUserAccess(deviceId, userId) {
+  if (!confirm('Bạn có chắc muốn xóa quyền truy cập?')) return;
+  
+  try {
+    const response = await fetchWithAuth(`/api/devices/${deviceId}/share/${userId}`, {
+      method: 'DELETE'
+    });
+    
+    const result = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(result.error || 'Lỗi xóa quyền');
+    }
+    
+    alert('Đã xóa quyền truy cập!');
+    loadDevicePermissions(); // Reload để cập nhật UI
+    
+  } catch (err) {
+    alert('Lỗi: ' + err.message);
+  }
+}

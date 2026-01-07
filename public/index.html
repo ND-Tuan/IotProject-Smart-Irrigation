@@ -13,17 +13,64 @@
 </head>
 
 <body>
-    <div class="app-container">
+    <!-- LOGIN SCREEN -->
+    <div id="login-screen" class="login-screen">
+        <div class="login-container">
+            <div class="login-header">
+                <i class="fa-solid fa-seedling"></i>
+                <h2>VƯỜN THÔNG MINH</h2>
+                <p>Hệ thống tưới cây tự động IoT</p>
+            </div>
+            <div class="login-form">
+                <div class="input-group">
+                    <i class="fa-solid fa-user"></i>
+                    <input type="text" id="login-username" placeholder="Tên đăng nhập hoặc email">
+                </div>
+                <div class="input-group">
+                    <i class="fa-solid fa-lock"></i>
+                    <input type="password" id="login-password" placeholder="Mật khẩu">
+                </div>
+                <button class="btn-login" onclick="login()">
+                    <i class="fa-solid fa-right-to-bracket"></i> Đăng Nhập
+                </button>
+                <div class="login-divider">hoặc</div>
+                <button class="btn-register" onclick="register()">
+                    <i class="fa-solid fa-user-plus"></i> Đăng Ký Tài Khoản
+                </button>
+                <div id="login-error" class="login-error"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="app-container" id="main-app" style="display: none;">
         <!-- Sidebar for Desktop -->
         <div class="sidebar">
             <div class="logo">
                 <h2>VƯỜN THÔNG MINH</h2>
+                <div class="user-info">
+                    <div>
+                        <div id="user-name" style="font-weight: 600; font-size: 14px;">User</div>
+                        <div id="user-role" style="font-size: 11px; color: #999;">Người dùng</div>
+                    </div>
+                    <div style="display: flex; gap: 5px;">
+                        <button class="btn-logout" onclick="openChangePasswordModal()" title="Đổi mật khẩu">
+                            <i class="fa-solid fa-key"></i>
+                        </button>
+                        <button class="btn-logout" onclick="logout()" title="Đăng xuất">
+                            <i class="fa-solid fa-right-from-bracket"></i>
+                        </button>
+                    </div>
+                </div>
             </div>
             
             <nav class="menu">
                 <button class="menu-item active" onclick="showView('dashboard')">
                     <i class="fa-solid fa-gauge-high"></i>
                     <span>Dashboard</span>
+                </button>
+                <button class="menu-item" onclick="showView('devices')">
+                    <i class="fa-solid fa-microchip"></i>
+                    <span>Thiết Bị</span>
                 </button>
                 <button class="menu-item" onclick="showView('control')">
                     <i class="fa-solid fa-sliders"></i>
@@ -45,11 +92,20 @@
                     <i class="fa-solid fa-clock-rotate-left"></i>
                     <span>Lịch Sử</span>
                 </button>
+                <button class="menu-item" id="admin-menu-item" onclick="openDeviceManagementModal()" style="display: none;">
+                    <i class="fa-solid fa-shield-halved"></i>
+                    <span>Quản Lý Thiết Bị</span>
+                </button>
             </nav>
 
             <div class="footer-status">
-                <i class="fa-solid fa-server"></i>
-                <span id="connection-status">Đang kết nối...</span>
+                <div class="status-row">
+                    <i class="fa-solid fa-server"></i>
+                    <span id="connection-status">Đang kết nối...</span>
+                </div>
+                <button class="btn-logout" onclick="logout()">
+                    <i class="fa-solid fa-right-from-bracket"></i> Đăng xuất
+                </button>
             </div>
         </div>
 
@@ -58,11 +114,11 @@
             <button class="menu-item active" onclick="showView('dashboard')">
                 <i class="fa-solid fa-gauge-high"></i>
             </button>
+            <button class="menu-item" onclick="showView('devices')">
+                <i class="fa-solid fa-microchip"></i>
+            </button>
             <button class="menu-item" onclick="showView('control')">
                 <i class="fa-solid fa-sliders"></i>
-            </button>
-            <button class="menu-item" onclick="showView('schedule')">
-                <i class="fa-solid fa-clock"></i>
             </button>
             <button class="menu-item" onclick="showView('chart')">
                 <i class="fa-solid fa-chart-line"></i>
@@ -73,6 +129,14 @@
         </nav>
 
         <div class="main-content">
+            <!-- Device Selector -->
+            <div class="device-selector">
+                <label><i class="fa-solid fa-microchip"></i> Thiết bị:</label>
+                <select id="device-select" onchange="onDeviceChange()">
+                    <option value="">Đang tải...</option>
+                </select>
+            </div>
+
             <div id="view-dashboard" class="view active">
                 <h3 class="view-title">Dashboard - Giám Sát Thời Gian Thực</h3>
                 <div class="dashboard-grid">
@@ -113,6 +177,48 @@
                         <div class="card-content">
                             <div class="card-label">Trạng thái Bơm</div>
                             <div class="card-value" id="pump-val">Đang tải...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="view-devices" class="view">
+                <h3 class="view-title">Quản Lý Thiết Bị IoT</h3>
+                <div class="devices-section">
+                    <div class="devices-stats">
+                        <div class="device-stat-card">
+                            <i class="fa-solid fa-microchip"></i>
+                            <div class="stat-info">
+                                <div class="stat-label">Tổng thiết bị</div>
+                                <div class="stat-value" id="total-devices">--</div>
+                            </div>
+                        </div>
+                        <div class="device-stat-card online">
+                            <i class="fa-solid fa-circle-check"></i>
+                            <div class="stat-info">
+                                <div class="stat-label">Online</div>
+                                <div class="stat-value" id="online-devices">--</div>
+                            </div>
+                        </div>
+                        <div class="device-stat-card offline">
+                            <i class="fa-solid fa-circle-xmark"></i>
+                            <div class="stat-info">
+                                <div class="stat-label">Offline</div>
+                                <div class="stat-value" id="offline-devices">--</div>
+                            </div>
+                        </div>
+                        <div class="device-stat-card pending">
+                            <i class="fa-solid fa-clock"></i>
+                            <div class="stat-info">
+                                <div class="stat-label">Chờ duyệt</div>
+                                <div class="stat-value" id="pending-devices">--</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="devices-list-card">
+                        <h4>Danh Sách Thiết Bị</h4>
+                        <div class="devices-list" id="devices-list">
+                            <p style="color: #666; font-style: italic;">Đang tải...</p>
                         </div>
                     </div>
                 </div>
@@ -344,6 +450,70 @@
             <button class="modal-save-btn" onclick="saveScheduleEdit()">
                 Lưu hẹn giờ
             </button>
+        </div>
+    </div>
+
+    <!-- Modal Đổi Mật Khẩu -->
+    <div id="change-password-modal" class="modal">
+        <div class="modal-content" style="max-width: 400px;">
+            <button class="modal-close" onclick="closeChangePasswordModal()">✕</button>
+            <h2 style="margin-bottom: 20px;"><i class="fa-solid fa-key"></i> Đổi Mật Khẩu</h2>
+
+            <div style="display: flex; flex-direction: column; gap: 15px;">
+                <div class="input-group">
+                    <i class="fa-solid fa-lock"></i>
+                    <input type="password" id="old-password" placeholder="Mật khẩu cũ" style="flex: 1; padding: 10px;">
+                </div>
+
+                <div class="input-group">
+                    <i class="fa-solid fa-lock"></i>
+                    <input type="password" id="new-password" placeholder="Mật khẩu mới (tối thiểu 6 ký tự)" style="flex: 1; padding: 10px;">
+                </div>
+
+                <div class="input-group">
+                    <i class="fa-solid fa-lock"></i>
+                    <input type="password" id="confirm-password" placeholder="Xác nhận mật khẩu mới" style="flex: 1; padding: 10px;">
+                </div>
+
+                <div id="password-error" style="color: #f44336; font-size: 13px; display: none;"></div>
+                <div id="password-success" style="color: #4caf50; font-size: 13px; display: none;"></div>
+            </div>
+
+            <button class="modal-save-btn" onclick="changePassword()" style="margin-top: 15px;">
+                <i class="fa-solid fa-check"></i> Đổi Mật Khẩu
+            </button>
+        </div>
+    </div>
+
+    <!-- Modal Quản Lý Thiết Bị (Admin only) -->
+    <div id="device-management-modal" class="modal">
+        <div class="modal-content" style="max-width: 800px;">
+            <button class="modal-close" onclick="closeDeviceManagementModal()">✕</button>
+            <h2 style="margin-bottom: 20px;"><i class="fa-solid fa-shield-halved"></i> Quản Lý Phân Quyền Thiết Bị</h2>
+
+            <div style="margin-bottom: 20px;">
+                <label style="font-weight: 600; margin-bottom: 5px; display: block;">Chọn thiết bị:</label>
+                <select id="manage-device-select" onchange="loadDevicePermissions()" style="width: 100%; padding: 10px; border-radius: 5px; border: 1px solid #ddd;">
+                    <option value="">-- Chọn thiết bị --</option>
+                </select>
+            </div>
+
+            <div id="device-permissions-section" style="display: none;">
+                <h3 style="margin-bottom: 15px;">Người dùng có quyền truy cập:</h3>
+                <div id="shared-users-list" style="margin-bottom: 20px;"></div>
+
+                <hr style="margin: 20px 0; border: none; border-top: 1px solid #eee;">
+
+                <h3 style="margin-bottom: 15px;">Thêm người dùng mới:</h3>
+                <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                    <select id="user-to-share-select" style="flex: 1; padding: 10px; border-radius: 5px; border: 1px solid #ddd;">
+                        <option value="">-- Chọn người dùng --</option>
+                    </select>
+                    <button onclick="shareDeviceWithUser()" class="modal-save-btn" style="margin: 0;">
+                        <i class="fa-solid fa-user-plus"></i> Thêm
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
 

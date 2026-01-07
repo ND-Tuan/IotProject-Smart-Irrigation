@@ -1,11 +1,11 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
-#include <DHT.h> // 1. Thêm thư viện DHT
+#include <DHT.h>
+#include <WiFiManager.h> // Cài thư viện: WiFiManager by tzapu
 
 // --- CẤU HÌNH WIFI & MQTT ---
-const char* ssid = "Wokwi-GUEST";
-const char* password = "";
+// WiFi sẽ được config qua WiFiManager portal (không cần hardcode)
 const char* mqtt_server = "dff8f7471d7745a6907092c74b9267e6.s1.eu.hivemq.cloud"; 
 const int mqtt_port = 8883; 
 const char* mqtt_user = "Project220251";
@@ -14,19 +14,22 @@ const char* mqtt_pass = "Project220251";
 WiFiClientSecure espClient;
 PubSubClient client(espClient);
 
+// --- DEVICE ID (Tự động tạo từ MAC) ---
+String deviceId;
+
 // --- CẤU HÌNH CHÂN ---
 #define SOIL_PIN 36   // GPIO36 (VP) - Chân analog cho cảm biến độ ẩm đất (joystick)
 #define RELAY_PIN 22  // GPIO22 - Chân điều khiển relay bơm
 #define DHTPIN 4      // GPIO4 - Chân Data của DHT (Nhiệt độ & Độ ẩm KK)
 #define DHTTYPE DHT22 // Chọn loại cảm biến: DHT11 hoặc DHT22
 
-DHT dht(DHTPIN, DHTTYPE); // Khởi tạo cảm biến DHT (nhiệt độ & độ ẩm KK)
+DHT dht(DHTPIN, DHTTYPE);
 
-// --- CẤU HÌNH NGƯỢNG BƠM (Có thể thay đổi từ Web) ---
-int DRY = 4095;     // ESP32 ADC 12-bit (0-4095)
-int WET = 1200;     // Điều chỉnh tương ứng cho 12-bit
-int START = 40;     // Ngưỡng bật bơm (%) - Có thể thay đổi
-int STOP = 45;      // Ngưỡng tắt bơm (%) - Có thể thay đổi
+// --- CẤU HÌNH NGƯỢNG BƠM ---
+int DRY = 4095;
+int WET = 1200;
+int START = 40;
+int STOP = 45;
 
 // --- BIẾN TRẠNG THÁI ---
 bool isAuto = true;      
@@ -34,7 +37,7 @@ bool active = false;
 bool manual = false;  
 
 unsigned long lastPublish = 0;
-const unsigned long publishInterval = 3000; // 3 giây (real-time control) 
+const unsigned long publishInterval = 3000;
 String clientId;
 
 // --- HÀM XỬ LÝ LỆNH TỪ WEB ---
@@ -44,100 +47,96 @@ void callback(char* topic, byte* payload, unsigned int length) {
     message += (char)payload[i];
   }
   Serial.print("Nhan duoc: "); Serial.println(message);
-
-  if (String(topic) == "iot/cmd/mode") {
-    if (message == "AUTO") {
-      isAuto = true;
-    } else if (message == "MANUAL") {
-      isAuto = false;
-      manual = active; 
-    }
-    client.publish("iot/mode", isAuto ? "AUTO" : "MANUAL");
-  }
-
-  if (String(topic) == "iot/cmd/pump") {
-    Serial.println("✅ Xử lý cmd/pump");
-    if (!isAuto) { 
-      if (message == "ON") manual = true;
-      else if (message == "OFF") manual = false;
-    }
-  }
-
-  // Nhận lệnh thay đổi ngưỡng
-  if (String(topic) == "iot/cmd/threshold") {
-    Serial.println("✅ Xử lý cmd/threshold");
-    Serial.print("Raw message: '"); Serial.print(message); Serial.println("'");
+  
+  String topicStr = String(topic);
+  
+  // New format: iot/{deviceId}/command/{cmd}
+  if (topicStr.startsWith("iot/" + deviceId + "/command/")) {
+    String cmd = topicStr.substring(String("iot/" + deviceId + "/command/").length());
     
-    // Format: "START,STOP" ví dụ: "35,50"
-    int commaIndex = message.indexOf(',');
-    Serial.print("Comma index: "); Serial.println(commaIndex);
-    
-    if (commaIndex > 0) {
-      String startStr = message.substring(0, commaIndex);
-      String stopStr = message.substring(commaIndex + 1);
-      
-      Serial.print("Start string: '"); Serial.print(startStr); Serial.println("'");
-      Serial.print("Stop string: '"); Serial.print(stopStr); Serial.println("'");
-      
-      int newStart = startStr.toInt();
-      int newStop = stopStr.toInt();
-      
-      Serial.print("Parsed - Start: "); Serial.print(newStart);
-      Serial.print(" | Stop: "); Serial.println(newStop);
-      
-      // Xác thực giá trị hợp lệ
-      START = constrain(newStart, 0, 100);
-      STOP = constrain(newStop, 0, 100);
-      if (STOP <= START) STOP = START + 5; // Đảm bảo STOP > START
-      
-      Serial.println("🎯 CẬP NHẬT NGƯỠNG THÀNH CÔNG!");
-      Serial.print("   Bật bơm: ");
-      Serial.print(START);
-      Serial.print("% | Tắt bơm: ");
-      Serial.print(STOP);
-      Serial.println("%");
-      
-      // Gửi lại xác nhận
-      char buf[20];
-      sprintf(buf, "%d,%d", START, STOP);
-      client.publish("iot/threshold", buf);
-      Serial.print("Đã gửi xác nhận: "); Serial.println(buf);
-    } else {
-      Serial.println("LỖI: Không tìm thấy dấu phẩy trong message!");
+    if (cmd == "mode") {
+      if (message == "AUTO") {
+        isAuto = true;
+      } else if (message == "MANUAL") {
+        isAuto = false;
+        manual = active;
+      }
+      String modeTopic = "iot/" + deviceId + "/status/mode";
+      client.publish(modeTopic.c_str(), isAuto ? "AUTO" : "MANUAL");
     }
+    else if (cmd == "pump") {
+      if (!isAuto) {
+        if (message == "ON") manual = true;
+        else if (message == "OFF") manual = false;
+      }
+    }
+    else if (cmd == "threshold") {
+      int commaIndex = message.indexOf(',');
+      if (commaIndex > 0) {
+        String startStr = message.substring(0, commaIndex);
+        String stopStr = message.substring(commaIndex + 1);
+        
+        int newStart = startStr.toInt();
+        int newStop = stopStr.toInt();
+        
+        START = constrain(newStart, 0, 100);
+        STOP = constrain(newStop, 0, 100);
+        if (STOP <= START) STOP = START + 5;
+        
+        Serial.println("🎯 CẬP NHẬT NGƯỠNG THÀNH CÔNG!");
+        Serial.print("   Bật bơm: "); Serial.print(START);
+        Serial.print("% | Tắt bơm: "); Serial.print(STOP); Serial.println("%");
+      }
+    }
+    return;
   }
 }
 
 void setup_wifi() {
-  delay(10);
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500); Serial.print(".");
+  Serial.println("Starting WiFiManager...");
+  
+  // Tạo deviceId từ MAC address trước
+  uint64_t chipid = ESP.getEfuseMac();
+  deviceId = "ESP32_" + String((uint32_t)(chipid >> 32), HEX) + String((uint32_t)chipid, HEX);
+  deviceId.toUpperCase();
+  
+  // Tạo WiFiManager instance
+  WiFiManager wm;
+  
+  // Uncomment dòng dưới để xóa WiFi đã lưu (dùng khi test)
+  // wm.resetSettings();
+  
+  // Tên Access Point: SmartGarden_ESP32_xxxxx
+  String apName = "SmartGarden_" + deviceId;
+  
+  // Auto connect - nếu chưa có WiFi đã lưu, tạo AP config portal
+  // Access Point không có password (mở)
+  wm.setConfigPortalTimeout(180); // Timeout 3 phút
+  
+  if (!wm.autoConnect(apName.c_str())) {
+    Serial.println("Failed to connect - restarting...");
+    delay(3000);
+    ESP.restart();
   }
-  Serial.println("\nWiFi connected");
+  
+  Serial.println("\nWiFi connected!");
+  Serial.print("IP: "); Serial.println(WiFi.localIP());
+  Serial.print("Device ID: "); Serial.println(deviceId);
 }
 
 void reconnect() {
   while (!client.connected()) {
     Serial.print("MQTT connecting...");
-    if (client.connect(clientId.c_str(), mqtt_user, mqtt_pass)) {
+    
+    // Sử dụng deviceId làm clientId
+    if (client.connect(deviceId.c_str(), mqtt_user, mqtt_pass)) {
       Serial.println("connected");
       
-      // Subscribe với debug
-      bool sub1 = client.subscribe("iot/cmd/mode");
-      Serial.print("Subscribe iot/cmd/mode: "); Serial.println(sub1 ? "OK" : "FAIL");
-      
-      bool sub2 = client.subscribe("iot/cmd/pump");
-      Serial.print("Subscribe iot/cmd/pump: "); Serial.println(sub2 ? "OK" : "FAIL");
-      
-      bool sub3 = client.subscribe("iot/cmd/threshold");
-      Serial.print("Subscribe iot/cmd/threshold: "); Serial.println(sub3 ? "OK" : "FAIL");
-      
-      // Gửi ngưỡng hiện tại khi kết nối
-      char buf[20];
-      sprintf(buf, "%d,%d", START, STOP);
-      client.publish("iot/threshold", buf);
-      Serial.print("Đã gửi ngưỡng hiện tại: "); Serial.println(buf);
+      // Subscribe new format: iot/{deviceId}/command/#
+      String cmdTopic = "iot/" + deviceId + "/command/#";
+      bool sub1 = client.subscribe(cmdTopic.c_str());
+      Serial.print("Subscribe "); Serial.print(cmdTopic); Serial.print(": ");
+      Serial.println(sub1 ? "OK" : "FAIL");
     } else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
@@ -163,8 +162,14 @@ void setup() {
   
   dht.begin(); // Khởi động cảm biến DHT (nhiệt độ & độ ẩm KK)
 
+  // Tạo deviceId từ MAC address của ESP32
   uint64_t chipid = ESP.getEfuseMac();
+  deviceId = "ESP32_" + String((uint32_t)chipid, HEX);
   clientId = "ESP32Soil-" + String((uint32_t)(chipid >> 32), HEX) + String((uint32_t)chipid, HEX);
+  
+  Serial.print("Device ID: "); Serial.println(deviceId);
+  Serial.print("Client ID: "); Serial.println(clientId);
+  
   setup_wifi();
   
   espClient.setInsecure(); 
@@ -191,7 +196,7 @@ void loop() {
   // Relay module active LOW: LOW = BẬT, HIGH = TẮT
   digitalWrite(RELAY_PIN, active ? LOW : HIGH);
 
-  // Gửi dữ liệu định kỳ (Mỗi 5 giây - Real-time)
+  // Gửi dữ liệu định kỳ (Mỗi 3 giây - Real-time)
   if (now - lastPublish >= publishInterval) {
     lastPublish = now;
     
@@ -199,10 +204,10 @@ void loop() {
     float h = dht.readHumidity();
     float t = dht.readTemperature();
 
-    // Kiểm tra nếu đọc lỗi (NaN = Not a Number)
+    // Kiểm tra nếu đọc lỗi
     if (isnan(h) || isnan(t)) {
       Serial.println(F("Loi doc DHT sensor!"));
-      h = 0; t = 0; // Gán tạm bằng 0 để không lỗi chuỗi
+      h = 0; t = 0;
     }
     
     // Đọc độ ẩm đất từ cảm biến analog
@@ -210,25 +215,27 @@ void loop() {
 
     char buf[10];
     
-    // Gửi Độ ẩm đất (từ DHT thứ hai)
+    // NEW FORMAT: Publish to iot/{deviceId}/sensor/{type}
+    String baseTopic = "iot/" + deviceId + "/sensor/";
+    
+    dtostrf(t, 1, 1, buf);
+    client.publish((baseTopic + "temp").c_str(), buf);
+    
+    dtostrf(h, 1, 1, buf);
+    client.publish((baseTopic + "hum").c_str(), buf);
+    
     sprintf(buf, "%d", soilPct);
-    client.publish("iot/soil", buf);
-
-    // Gửi Nhiệt độ (Temp)
-    sprintf(buf, "%.1f", t);
-    client.publish("iot/temp", buf);
-
-    // Gửi Độ ẩm KK (Hum)
-    sprintf(buf, "%.1f", h);
-    client.publish("iot/hum", buf);
-
-    // Gửi trạng thái khác
-    client.publish("iot/pump", active ? "ON" : "OFF");
-    client.publish("iot/mode", isAuto ? "AUTO" : "MANUAL");
-
-    Serial.print("T: "); Serial.print(t);
-    Serial.print(" | H: "); Serial.print(h);
-    Serial.print(" | Soil: "); Serial.print(soilPct);
+    client.publish((baseTopic + "soil").c_str(), buf);
+    
+    // Publish pump status
+    String pumpTopic = "iot/" + deviceId + "/status/pump";
+    client.publish(pumpTopic.c_str(), active ? "ON" : "OFF");
+    
+    Serial.print("Sent - Device: "); Serial.print(deviceId);
+    Serial.print(" | T: "); Serial.print(t);
+    Serial.print("°C | H: "); Serial.print(h);
+    Serial.print("% | Soil: "); Serial.print(soilPct);
     Serial.print("% | Pump: "); Serial.println(active ? "ON" : "OFF");
   }
+    
 }
