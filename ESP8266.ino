@@ -17,20 +17,19 @@ PubSubClient client(espClient);
 // --- DEVICE ID (Tự động tạo từ Chip ID) ---
 String deviceId;
 
-// --- CẤU HÌNH CHÂN ESP8266 ---
-#define SOIL_PIN A0    // A0 - Chân analog duy nhất của ESP8266 cho cảm biến độ ẩm đất
-#define RELAY_PIN D1   // GPIO5 (D1) - Chân điều khiển relay bơm
-#define DHTPIN D2      // GPIO4 (D2) - Chân Data của DHT (Nhiệt độ & Độ ẩm KK)
-#define DHTTYPE DHT22  // Chọn loại cảm biến: DHT11 hoặc DHT22
+// --- CẤU HÌNH CHÂN ---
+#define SOIL_PIN A0     
+#define RELAY_PIN D1    
+#define DHTPIN D2        
+#define DHTTYPE DHT22   // <--- LƯU Ý: Nếu dùng con màu xanh dương thì sửa thành DHT11
 
-DHT dht(DHTPIN, DHTTYPE);
+DHT dht(DHTPIN, DHTTYPE); 
 
-// --- CẤU HÌNH NGƯỠNG BƠM ---
-// Lưu ý: ESP8266 ADC là 10-bit (0-1023), khác ESP32 12-bit (0-4095)
-int DRY = 1023;  // Giá trị khô (thay đổi tùy cảm biến)
-int WET = 300;   // Giá trị ướt (thay đổi tùy cảm biến)
-int START = 40;  // Ngưỡng bật bơm (%)
-int STOP = 45;   // Ngưỡng tắt bơm (%)
+// --- CẤU HÌNH NGƯỠNG ---
+int DRY = 1023;       
+int WET = 300;        
+const int START = 20; 
+const int STOP = 30;
 
 // --- BIẾN TRẠNG THÁI ---
 bool isAuto = true;      

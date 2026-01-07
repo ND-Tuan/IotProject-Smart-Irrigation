@@ -399,9 +399,21 @@ app.post("/api/schedules", async (req, res) => {
     if (!req.body.deviceId) {
       return res.status(400).json({ error: "deviceId là bắt buộc" });
     }
-    const newSchedule = await Schedule.create(req.body);
+    
+    // Đảm bảo days là array
+    const scheduleData = {
+      ...req.body,
+      days: Array.isArray(req.body.days) ? req.body.days : []
+    };
+    
+    console.log('📅 Tạo lịch mới:', scheduleData);
+    
+    const newSchedule = await Schedule.create(scheduleData);
     res.json({ message: "success", id: newSchedule._id });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { 
+    console.error('Lỗi tạo schedule:', err);
+    res.status(500).json({ error: err.message }); 
+  }
 });
 
 app.delete("/api/schedules/:id", async (req, res) => {
@@ -413,9 +425,20 @@ app.delete("/api/schedules/:id", async (req, res) => {
 
 app.put("/api/schedules/:id", async (req, res) => {
   try {
-    await Schedule.findByIdAndUpdate(req.params.id, req.body);
+    // Đảm bảo days là array
+    const updateData = {
+      ...req.body,
+      days: Array.isArray(req.body.days) ? req.body.days : []
+    };
+    
+    console.log('📅 Cập nhật lịch:', req.params.id, updateData);
+    
+    await Schedule.findByIdAndUpdate(req.params.id, updateData);
     res.json({ message: "success" });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { 
+    console.error('Lỗi cập nhật schedule:', err);
+    res.status(500).json({ error: err.message }); 
+  }
 });
 
 // API biểu đồ (Chart Data)

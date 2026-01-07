@@ -875,13 +875,8 @@ function loadSchedules() {
       
       scheduleList.innerHTML = '';
       schedules.forEach(schedule => {
-        // Parse days từ JSON
-        let days = [];
-        try {
-          days = JSON.parse(schedule.days || '[]');
-        } catch (e) {
-          days = [];
-        }
+        // Days đã là array từ MongoDB, không cần parse
+        const days = Array.isArray(schedule.days) ? schedule.days : [];
         
         // Tạo HTML cho các ngày
         const dayLabels = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
@@ -901,7 +896,7 @@ function loadSchedules() {
             </div>
             <label class="schedule-toggle" onclick="event.stopPropagation()">
               <input type="checkbox" ${schedule.enabled ? 'checked' : ''} 
-                     onchange="toggleSchedule(${schedule.id}, this.checked)">
+                     onchange="toggleSchedule('${schedule._id}', this.checked)">
               <span class="toggle-slider"></span>
             </label>
           </div>
@@ -954,6 +949,8 @@ function saveNewSchedule() {
   
   const duration = 60;
   
+  console.log('📅 Gửi lịch mới:', { time, days: selectedDays, duration, deviceId: selectedDeviceId });
+  
   fetchWithAuth('/api/schedules', {
     method: 'POST',
     body: JSON.stringify({ 
@@ -964,7 +961,8 @@ function saveNewSchedule() {
     })
   })
     .then(response => response.json())
-    .then(() => {
+    .then((result) => {
+      console.log('✅ Tạo lịch thành công:', result);
       closeAddModal();
       loadSchedules();
     })
@@ -972,14 +970,10 @@ function saveNewSchedule() {
 }
 
 function openEditModal(schedule) {
-  editingScheduleId = schedule.id;
+  editingScheduleId = schedule._id;
   
-  // Parse days
-  try {
-    editSelectedDays = JSON.parse(schedule.days || '[]');
-  } catch (e) {
-    editSelectedDays = [];
-  }
+  // Days đã là array, không cần parse
+  editSelectedDays = Array.isArray(schedule.days) ? schedule.days : [];
   
   // Set time
   document.getElementById('edit-schedule-time').value = schedule.time;
@@ -1023,12 +1017,15 @@ function saveScheduleEdit() {
   
   const duration = 60;
   
+  console.log('📅 Cập nhật lịch:', editingScheduleId, { time, days: editSelectedDays, duration, enabled });
+  
   fetchWithAuth(`/api/schedules/${editingScheduleId}`, {
     method: 'PUT',
     body: JSON.stringify({ time, days: editSelectedDays, duration, enabled })
   })
     .then(response => response.json())
-    .then(() => {
+    .then((result) => {
+      console.log('✅ Cập nhật lịch thành công:', result);
       closeEditModal();
       loadSchedules();
     })
