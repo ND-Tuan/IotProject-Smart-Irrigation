@@ -534,6 +534,15 @@ body {
     background: #dc2626;
 }
 
+.btn-device-action.btn-approve {
+    background: #f59e0b;
+    color: white;
+}
+
+.btn-device-action.btn-approve:hover {
+    background: #d97706;
+}
+
 .main-content {
     flex: 1;
     background: #f5f7fa;

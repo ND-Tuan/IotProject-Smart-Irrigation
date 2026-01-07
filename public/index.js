@@ -135,11 +135,6 @@ function showMainApp() {
   document.getElementById('user-role').textContent = 
     currentUser.role === 'admin' ? 'Quản trị viên' : 
     currentUser.role === 'user' ? 'Người dùng' : 'Xem dữ liệu';
-  
-  // Hiển thị menu quản lý thiết bị cho admin
-  if (currentUser.role === 'admin') {
-    document.getElementById('admin-menu-item').style.display = 'flex';
-  }
 }
 
 // Fetch with auth
@@ -257,6 +252,9 @@ function updateDevicesView(devices) {
           <div class="device-actions">
             <button class="btn-device-action btn-edit" onclick="editDevice('${device.deviceId}')">
               <i class="fa-solid fa-edit"></i> Sửa
+            </button>
+            <button class="btn-device-action btn-approve" onclick="openDeviceManagementModal('${device.deviceId}')">
+              <i class="fa-solid fa-users-gear"></i> Quản lý
             </button>
             <button class="btn-device-action btn-delete" onclick="deleteDevice('${device.deviceId}')">
               <i class="fa-solid fa-trash"></i> Xóa
@@ -1319,42 +1317,27 @@ async function changePassword() {
 
 // ============ QUẢN LÝ THIẾT BỊ (ADMIN) ============
 let allUsers = [];
-let allDevicesForManagement = [];
+let currentManagedDeviceId = null;
 
-async function openDeviceManagementModal() {
+async function openDeviceManagementModal(deviceId) {
+  if (!deviceId) {
+    alert('Không có thông tin thiết bị!');
+    return;
+  }
+  
+  currentManagedDeviceId = deviceId;
   document.getElementById('device-management-modal').style.display = 'flex';
   
-  // Load devices và users
-  await Promise.all([
-    loadDevicesForManagement(),
-    loadAllUsers()
-  ]);
+  // Load users
+  await loadAllUsers();
+  
+  // Load thông tin thiết bị và permissions
+  await loadDevicePermissions();
 }
 
 function closeDeviceManagementModal() {
   document.getElementById('device-management-modal').style.display = 'none';
-}
-
-async function loadDevicesForManagement() {
-  try {
-    const response = await fetchWithAuth('/api/devices');
-    const result = await response.json();
-    
-    allDevicesForManagement = result.data || [];
-    
-    const selectEl = document.getElementById('manage-device-select');
-    selectEl.innerHTML = '<option value="">-- Chọn thiết bị --</option>';
-    
-    allDevicesForManagement.forEach(device => {
-      const option = document.createElement('option');
-      option.value = device.deviceId;
-      option.textContent = `${device.name || device.deviceId} (${device.status})`;
-      selectEl.appendChild(option);
-    });
-    
-  } catch (err) {
-    console.error('Error loading devices:', err);
-  }
+  currentManagedDeviceId = null;
 }
 
 async function loadAllUsers() {
@@ -1370,10 +1353,9 @@ async function loadAllUsers() {
 }
 
 async function loadDevicePermissions() {
-  const deviceId = document.getElementById('manage-device-select').value;
+  const deviceId = currentManagedDeviceId;
   
   if (!deviceId) {
-    document.getElementById('device-permissions-section').style.display = 'none';
     return;
   }
   
@@ -1382,8 +1364,8 @@ async function loadDevicePermissions() {
     const result = await response.json();
     const device = result.data;
     
-    // Hiển thị section
-    document.getElementById('device-permissions-section').style.display = 'block';
+    // Hiển thị tên thiết bị
+    document.getElementById('current-device-name').textContent = device.name || device.deviceId;
     
     // Hiển thị danh sách users đang có quyền
     const sharedUsersList = document.getElementById('shared-users-list');
@@ -1397,7 +1379,7 @@ async function loadDevicePermissions() {
           <div>
             <strong>${user.username}</strong> (${user.email})
           </div>
-          <button onclick="removeUserAccess('${deviceId}', '${user._id}')" style="padding: 5px 10px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer;">
+          <button onclick="removeUserAccess('${currentManagedDeviceId}', '${user._id}')" style="padding: 5px 10px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer;">
             <i class="fa-solid fa-trash"></i> Xóa
           </button>
         `;
@@ -1429,7 +1411,7 @@ async function loadDevicePermissions() {
 }
 
 async function shareDeviceWithUser() {
-  const deviceId = document.getElementById('manage-device-select').value;
+  const deviceId = currentManagedDeviceId;
   const userId = document.getElementById('user-to-share-select').value;
   
   if (!deviceId || !userId) {
@@ -1441,7 +1423,7 @@ async function shareDeviceWithUser() {
     const response = await fetchWithAuth(`/api/devices/${deviceId}/share`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId })
+      body: JSON.stringify({userIds: [userId]})
     });
     
     const result = await response.json();
