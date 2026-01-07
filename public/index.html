@@ -414,6 +414,20 @@
                 </div>
 
                 <div class="modal-section">
+                    <label>THỜI LƯỢNG TƯỚI</label>
+                    <div class="duration-picker">
+                        <button type="button" class="duration-btn" onclick="adjustDuration('add', -5)">−</button>
+                        <div class="duration-display">
+                            <input type="number" class="duration-value" id="add-schedule-duration" 
+                                   value="60" min="1" max="120" 
+                                   oninput="updateDurationDisplay('add')">
+                            <div class="duration-unit">phút</div>
+                        </div>
+                        <button type="button" class="duration-btn" onclick="adjustDuration('add', 5)">+</button>
+                    </div>
+                </div>
+
+                <div class="modal-section">
                     <label>CHỌN NGÀY TRONG TUẦN</label>
                     <div class="modal-days" id="add-modal-days">
                         <button class="modal-day-btn add-day-btn" data-day="1">T2</button>
@@ -451,6 +465,20 @@
                     <label>CHỌN THỜI GIAN</label>
                     <div class="time-picker">
                         <input type="time" id="edit-schedule-time">
+                    </div>
+                </div>
+
+                <div class="modal-section">
+                    <label>THỜI LƯỢNG TƯỚI</label>
+                    <div class="duration-picker">
+                        <button type="button" class="duration-btn" onclick="adjustDuration('edit', -5)">−</button>
+                        <div class="duration-display">
+                            <input type="number" class="duration-value" id="edit-schedule-duration" 
+                                   value="60" min="1" max="120" 
+                                   oninput="updateDurationDisplay('edit')">
+                            <div class="duration-unit">phút</div>
+                        </div>
+                        <button type="button" class="duration-btn" onclick="adjustDuration('edit', 5)">+</button>
                     </div>
                 </div>
 

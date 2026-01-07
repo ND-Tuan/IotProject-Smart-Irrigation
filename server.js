@@ -406,7 +406,7 @@ app.post("/api/schedules", async (req, res) => {
       days: Array.isArray(req.body.days) ? req.body.days : []
     };
     
-    console.log('📅 Tạo lịch mới:', scheduleData);
+    console.log('Tạo lịch mới:', scheduleData);
     
     const newSchedule = await Schedule.create(scheduleData);
     res.json({ message: "success", id: newSchedule._id });
@@ -431,7 +431,7 @@ app.put("/api/schedules/:id", async (req, res) => {
       days: Array.isArray(req.body.days) ? req.body.days : []
     };
     
-    console.log('📅 Cập nhật lịch:', req.params.id, updateData);
+    console.log('Cập nhật lịch:', req.params.id, updateData);
     
     await Schedule.findByIdAndUpdate(req.params.id, updateData);
     res.json({ message: "success" });
@@ -469,30 +469,126 @@ app.get("/api/chart-data", async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Cache lưu các lịch đã chạy trong phiên hiện tại (tránh chạy 2 lần)
+const executedSchedules = new Map(); // { scheduleId: timestamp }
+
 // Hàm set lịch tưới tự động
-function checkSchedules() {
+async function checkSchedules() {
   const now = new Date();
   const currentTime = now.getHours().toString().padStart(2, '0') + ':' + 
                       now.getMinutes().toString().padStart(2, '0');
   const currentDay = now.getDay(); // 0-6
 
-  Schedule.find({ enabled: true, time: currentTime }).then(schedules => {
-    schedules.forEach(sch => {
-      if (sch.days.length === 0 || sch.days.includes(currentDay)) {
-        console.log(`Kích hoạt lịch tưới (${sch.deviceId}): ${sch.time} (${sch.duration}s)`);
-        
-        // Gửi xuống device cụ thể
-        if (sch.deviceId) {
-          mqttClient.publish(`iot/${sch.deviceId}/command/schedule`, `${sch.duration}`);
-        } else {
-          // Backward compatible - gửi global
-          mqttClient.publish('iot/cmd/schedule', `${sch.duration}`);
-        }
+  console.log(`Check lịch tưới: ${currentTime} (Thứ ${currentDay === 0 ? 'CN' : currentDay + 1})`);
+
+  try {
+    // Tìm TẤT CẢ schedule enabled (không filter theo time)
+    const allSchedules = await Schedule.find({ enabled: 1 });
+    console.log(`Tổng số lịch enabled: ${allSchedules.length}`);
+    
+    for (const sch of allSchedules) {
+      // Kiểm tra xem lịch này đã chạy trong vòng 1 phút chưa
+      const lastExecuted = executedSchedules.get(sch._id.toString());
+      if (lastExecuted && (Date.now() - lastExecuted) < 60000) {
+        // Đã chạy trong vòng 60s, bỏ qua
+        continue;
       }
-    });
-  }).catch(e => console.error(e));
+      
+      // Kiểm tra thời gian có khớp không (so sánh HH:MM)
+      if (sch.time !== currentTime) {
+        continue;
+      }
+      
+      console.log(`Tìm thấy lịch khớp: ${sch.deviceId} - ${sch.time} - ${sch.duration}phút`);
+      
+      // Kiểm tra ngày trong tuần có khớp không
+      if (sch.days.length > 0 && !sch.days.includes(currentDay)) {
+        console.log(`Bỏ qua: Không phải ngày hôm nay (days: ${sch.days.join(',')})`);
+        continue;
+      }
+      
+      // Kiểm tra device có active không
+      const device = await Device.findOne({ deviceId: sch.deviceId });
+      if (!device) {
+        console.log(`Lỗi: Device ${sch.deviceId} không tồn tại`);
+        continue;
+      }
+      
+      if (device.status !== 'active') {
+        console.log(`Bỏ qua: Device ${sch.deviceId} chưa active (status: ${device.status})`);
+        continue;
+      }
+      
+      // Kiểm tra device có online không (lastSeen trong 5 phút gần nhất)
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+      if (!device.lastSeen || device.lastSeen < fiveMinutesAgo) {
+        console.log(`Bỏ qua: Device ${sch.deviceId} offline (lastSeen: ${device.lastSeen})`);
+        continue;
+      }
+      
+      // Kiểm tra permission
+      if (!device.permissions.allowControl) {
+        console.log(`Bỏ qua: Device ${sch.deviceId} không có quyền điều khiển`);
+        continue;
+      }
+      
+      console.log(`KÍCH HOẠT LỊCH: ${sch.deviceId} - ${sch.duration} phút`);
+      
+      // Đánh dấu đã chạy
+      executedSchedules.set(sch._id.toString(), Date.now());
+      
+      // CÁCH MỚI: Gửi lệnh pump ON ngay lập tức
+      mqttClient.publish(`iot/${sch.deviceId}/command/mode`, 'MANUAL');
+      console.log(`      → Gửi: mode = MANUAL`);
+      
+      setTimeout(() => {
+        mqttClient.publish(`iot/${sch.deviceId}/command/pump`, 'ON');
+        console.log(`      → Gửi: pump = ON`);
+      }, 500);
+      
+      // Tạo command log
+      await Command.create({
+        deviceId: sch.deviceId,
+        command: 'SCHEDULE',
+        params: { duration: sch.duration, action: 'start' },
+        status: 'sent',
+        sentAt: new Date(),
+        source: 'schedule'
+      });
+      
+      // Tự động TẮT bơm sau duration (phút)
+      const durationMs = sch.duration * 60 * 1000;
+      setTimeout(async () => {
+        mqttClient.publish(`iot/${sch.deviceId}/command/pump`, 'OFF');
+        console.log(`      → Gửi: pump = OFF (sau ${sch.duration} phút)`);
+        
+        setTimeout(() => {
+          mqttClient.publish(`iot/${sch.deviceId}/command/mode`, 'AUTO');
+          console.log(`      → Gửi: mode = AUTO`);
+        }, 500);
+        
+        // Tạo command log cho OFF
+        await Command.create({
+          deviceId: sch.deviceId,
+          command: 'SCHEDULE',
+          params: { duration: sch.duration, action: 'stop' },
+          status: 'completed',
+          sentAt: new Date(),
+          completedAt: new Date(),
+          source: 'schedule'
+        });
+      }, durationMs);
+    }
+  } catch (e) {
+    console.error('Lỗi checkSchedules:', e);
+  }
 }
-setInterval(checkSchedules, 60000); // Check mỗi phút
+
+// Chạy ngay lần đầu sau 10s khởi động, sau đó mỗi 30s (để không bỏ lỡ lịch)
+setTimeout(() => {
+  checkSchedules();
+  setInterval(checkSchedules, 30000); // Check mỗi 30 giây thay vì 60s
+}, 10000);
 
 // Command Queue Scheduler - Gửi lệnh pending xuống devices
 async function processCommandQueue() {
@@ -531,7 +627,7 @@ async function processCommandQueue() {
         sentAt: new Date()
       });
       
-      console.log(`📤 Đã gửi lệnh ${cmd.command} xuống device ${cmd.deviceId}`);
+      console.log(`Đã gửi lệnh ${cmd.command} xuống device ${cmd.deviceId}`);
       
       // Auto-complete sau 30s nếu không có phản hồi
       setTimeout(async () => {
@@ -550,6 +646,7 @@ async function processCommandQueue() {
   }
 }
 setInterval(processCommandQueue, 5000); // Check mỗi 5 giây
+
 
 // === MỚI: MOUNT API ROUTES ===
 // Apply audit logger cho tất cả routes

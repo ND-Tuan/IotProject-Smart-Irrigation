@@ -893,6 +893,7 @@ function loadSchedules() {
             <div class="schedule-time-icon">
               <i class="fa-solid fa-clock"></i>
               <span class="schedule-time">${schedule.time}</span>
+              <span style="font-size: 12px; color: #666; margin-left: 8px;">(${schedule.duration || 60}p)</span>
             </div>
             <label class="schedule-toggle" onclick="event.stopPropagation()">
               <input type="checkbox" ${schedule.enabled ? 'checked' : ''} 
@@ -913,6 +914,7 @@ function loadSchedules() {
 function openAddModal() {
   // Reset form
   document.getElementById('add-schedule-time').value = '';
+  document.getElementById('add-schedule-duration').value = 60;
   selectedDays = [];
   
   // Reset tất cả nút ngày
@@ -922,6 +924,35 @@ function openAddModal() {
   
   // Show modal
   document.getElementById('add-schedule-modal').classList.add('active');
+}
+
+// Hàm điều chỉnh duration với nút +/-
+function adjustDuration(mode, change) {
+  const inputId = mode === 'add' ? 'add-schedule-duration' : 'edit-schedule-duration';
+  const input = document.getElementById(inputId);
+  
+  let currentValue = parseInt(input.value) || 60;
+  let newValue = currentValue + change;
+  
+  // Giới hạn 1-120 phút
+  newValue = Math.max(1, Math.min(120, newValue));
+  
+  input.value = newValue;
+}
+
+// Hàm validate khi user nhập trực tiếp
+function updateDurationDisplay(mode) {
+  const inputId = mode === 'add' ? 'add-schedule-duration' : 'edit-schedule-duration';
+  const input = document.getElementById(inputId);
+  
+  let value = parseInt(input.value);
+  
+  // Nếu không hợp lệ, giữ nguyên hoặc reset về 60
+  if (isNaN(value) || value < 1) {
+    input.value = 1;
+  } else if (value > 120) {
+    input.value = 120;
+  }
 }
 
 function closeAddModal() {
@@ -936,6 +967,7 @@ function saveNewSchedule() {
   }
   
   const time = document.getElementById('add-schedule-time').value;
+  const duration = parseInt(document.getElementById('add-schedule-duration').value) || 60;
   
   if (!time) {
     alert('Vui lòng chọn thời gian!');
@@ -947,7 +979,10 @@ function saveNewSchedule() {
     return;
   }
   
-  const duration = 60;
+  if (duration < 1 || duration > 120) {
+    alert('Thời lượng phải từ 1-120 phút!');
+    return;
+  }
   
   console.log('📅 Gửi lịch mới:', { time, days: selectedDays, duration, deviceId: selectedDeviceId });
   
@@ -978,6 +1013,10 @@ function openEditModal(schedule) {
   // Set time
   document.getElementById('edit-schedule-time').value = schedule.time;
   
+  // Set duration
+  const duration = schedule.duration || 60;
+  document.getElementById('edit-schedule-duration').value = duration;
+  
   // Set enabled
   document.getElementById('edit-schedule-enabled').checked = schedule.enabled === 1;
   
@@ -1003,6 +1042,7 @@ function closeEditModal() {
 
 function saveScheduleEdit() {
   const time = document.getElementById('edit-schedule-time').value;
+  const duration = parseInt(document.getElementById('edit-schedule-duration').value) || 60;
   const enabled = document.getElementById('edit-schedule-enabled').checked ? 1 : 0;
   
   if (!time) {
@@ -1015,7 +1055,10 @@ function saveScheduleEdit() {
     return;
   }
   
-  const duration = 60;
+  if (duration < 1 || duration > 120) {
+    alert('Thời lượng phải từ 1-120 phút!');
+    return;
+  }
   
   console.log('📅 Cập nhật lịch:', editingScheduleId, { time, days: editSelectedDays, duration, enabled });
   
