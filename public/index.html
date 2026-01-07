@@ -118,6 +118,9 @@
             <button class="menu-item" onclick="showView('stats')">
                 <i class="fa-solid fa-chart-pie"></i>
             </button>
+            <button class="menu-item" onclick="showView('settings')">
+                <i class="fa-solid fa-user-gear"></i>
+            </button>
         </nav>
 
         <div class="main-content">
@@ -347,6 +350,45 @@
                         </thead>
                         <tbody id="history-table-body-desktop"></tbody>
                     </table>
+                </div>
+            </div>
+
+            <div id="view-settings" class="view">
+                <h3 class="view-title">Cài Đặt Người Dùng</h3>
+                <div class="settings-section">
+                    <div class="user-info-card">
+                        <div class="user-avatar">
+                            <i class="fa-solid fa-user-circle"></i>
+                        </div>
+                        <div class="user-details">
+                            <div class="user-name-display" id="settings-user-name">User</div>
+                            <div class="user-role-display" id="settings-user-role">Người dùng</div>
+                        </div>
+                    </div>
+
+                    <div class="settings-actions">
+                        <button class="settings-btn btn-change-password" onclick="openChangePasswordModal()">
+                            <div class="settings-btn-icon">
+                                <i class="fa-solid fa-key"></i>
+                            </div>
+                            <div class="settings-btn-content">
+                                <div class="settings-btn-title">Đổi Mật Khẩu</div>
+                                <div class="settings-btn-desc">Thay đổi mật khẩu đăng nhập</div>
+                            </div>
+                            <i class="fa-solid fa-chevron-right"></i>
+                        </button>
+
+                        <button class="settings-btn btn-logout-settings" onclick="logout()">
+                            <div class="settings-btn-icon">
+                                <i class="fa-solid fa-right-from-bracket"></i>
+                            </div>
+                            <div class="settings-btn-content">
+                                <div class="settings-btn-title">Đăng Xuất</div>
+                                <div class="settings-btn-desc">Thoát khỏi tài khoản</div>
+                            </div>
+                            <i class="fa-solid fa-chevron-right"></i>
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
